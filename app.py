@@ -13,11 +13,12 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 #global vars
-input_path = "input/"
+input_path = "input_csvs/"
 
 #CSV Vars
-inputCSV = 'topic_13_counts.csv'
-number_of_topics = 100
+inputCSV = 'input_csvs/topic_13_counts.csv'
+number_of_topics = 37*2 #37 lines per page, 2 pages per spread, one spread per csv
+csv_list = {}
 max_count = 1
 min_count = 1
 
@@ -33,27 +34,24 @@ outter_margin = 54  # 0.75 inch
 top_margin = 54
 bottom_margin = 54
 
-df = pd.read_csv(inputCSV)
+# for each csv file in the folder 
+# take the top number_of_topics and put them in a new dataframe
+# then sort them by description alphabetically
+# then save that section of data into a dictionary where the csv number is the key and the value is the table
+for file in sorted(os.listdir(input_path)):
+    if file.endswith(".csv"):
+        dict_key = [int(s) for s in file.split('_') if s.isdigit()]
+        dict_key = str(dict_key)[1:len(dict_key)-2]
+        df = pd.read_csv(input_path+file)
+        df = df.head(number_of_topics)
+        df = df.sort_values(by="description", ascending = True)
+        csv_list.update({str(dict_key): df})
 
-# joined_files = os.path.join(input_path, "topic*.csv")
+print("csv_list keys")
+print(csv_list.keys())
+print(' ')
 
-# # A list of all joined files is returned
-# joined_list = glob.glob(joined_files)
-
-# # Finally, the files are joined
-# df = pd.concat(map(pd.read_csv, joined_list), ignore_index=True)
-
-# max_count
-
-
-
-#take the top number_of_topics and put them in a new dataframe, then sort them by description alphabetically
-filtered_data = df.head(number_of_topics)
-#filtered_data = filtered_data.sort_values(by="description", ascending=True)
-
-
-
-#PDF Work Starts
+# PDF Work Starts
 class BlankPage(Flowable):
     def __init__(self):
         Flowable.__init__(self)
@@ -98,14 +96,19 @@ footer_style = ParagraphStyle(
 # Convert the data to paragraphs for proper wrapping
 data_for_pdf = []
 
-# Add data rows with only descriptions
-for _, row in filtered_data.iterrows():
-    data_row = [Paragraph(str(row[1]), table_style)]  # Only the description column
-    data_for_pdf.append(data_row)
+# Process all topics in csv_list
+for topic_key, topic_data in csv_list.items():
+    # Add data rows with only descriptions for this topic
+    for _, row in topic_data.iterrows():
+        data_row = [Paragraph(str(row[1]), table_style)]  # Only the description column
+        data_for_pdf.append(data_row)
+    
+    # Add a page break after each topic (except the last one)
+    if topic_key != list(csv_list.keys())[-1]:
+        data_for_pdf.append(PageBreak())
 
-# Create the footer text
-footer_text = [int(s) for s in inputCSV.split('_') if s.isdigit()]
-footer_text = "TOPIC: " + str(footer_text[0])
+# Create the footer text - will be set dynamically per page
+footer_text = "TOPIC: "  # Base text, topic number will be added dynamically
 
 #create a custom doc template
 class MyDocTemplate(BaseDocTemplate):
@@ -114,6 +117,9 @@ class MyDocTemplate(BaseDocTemplate):
         
         # Initialize page counter to 1 (first page)
         self.page = 1
+        # Track which topic each page belongs to (2 pages per topic)
+        self.page_to_topic = {}
+        self._build_page_to_topic_mapping()
 
         # Create frame for odd pages (outer margin on left)
         odd_frame = Frame(
@@ -150,6 +156,15 @@ class MyDocTemplate(BaseDocTemplate):
         self.addPageTemplates([odd_template, even_template])
         self.pageTemplate = odd_template  # Set initial template
 
+    def _build_page_to_topic_mapping(self):
+        """Build a mapping of page numbers to topic keys"""
+        topic_keys = list(csv_list.keys())
+        for i, topic_key in enumerate(topic_keys):
+            # Each topic gets 2 pages (spread)
+            start_page = i * 2 + 1  # +1 because first page is blank
+            self.page_to_topic[start_page] = topic_key
+            self.page_to_topic[start_page + 1] = topic_key
+
     def handle_pageEnd(self):
         """Switch templates between odd and even pages"""
         if self.page % 2 == 0:  # Even page
@@ -164,11 +179,15 @@ class MyDocTemplate(BaseDocTemplate):
             canvas.saveState()
             canvas.setFont('CrimsonText-SemiBold', font_size)
 
+            # Get the topic for this page
+            topic_key = self.page_to_topic.get(self.page, "Unknown")
+            current_footer_text = footer_text + str(topic_key)
+
             # Choose footer alignment based on even/odd page
             is_even = doc.page % 2 == 0
             x = OUTER_MARGIN if is_even else (page_size[0] - (OUTER_MARGIN*2))
 
-            canvas.drawString(x, BOTTOM_MARGIN - 20, footer_text)
+            canvas.drawString(x, BOTTOM_MARGIN - 20, current_footer_text)
             canvas.restoreState()
 
 #creating pdf
