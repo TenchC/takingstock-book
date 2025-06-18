@@ -192,3 +192,9 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Ignore all CSV files in the input directory
+input_csvs/*.csv
+
+# Ignore any CSV files in the root directory
+*.csv
