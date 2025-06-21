@@ -1,7 +1,6 @@
-import sys
 import pandas as pd
 import os
-import glob
+import math
 from reportlab.pdfgen import canvas
 from PyPDF2 import PdfReader, PdfWriter
 import tempfile
@@ -10,6 +9,7 @@ import tempfile
 from reportlab.platypus import Table, TableStyle, Paragraph, Spacer, PageTemplate, Frame, BaseDocTemplate, PageBreak, Flowable
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.colors import Color
 
 #need pdfmetrics to register the font
 from reportlab.pdfbase import pdfmetrics
@@ -23,7 +23,13 @@ inputCSV = 'input_csvs/topic_13_counts.csv'
 number_of_topics = 37*2 #37 lines per page, 2 pages per spread, one spread per csv
 csv_list = {}
 
+#Color analysis vars
+LOG_COLOR = True
+LOG_VAL = 50
+LOG_SUB = 1 #rough need to estimate
+BLACK_COUNT = 10000
 
+# div count by 1000, if count_color > 1 count_color = 1
 # PDF Vars
 outputPDF = 'output.pdf'
 page_size = [432, 648] #in points, 72 points = 1 inch
@@ -40,6 +46,7 @@ footer_text = "TOPIC: "  # Base text, topic number will be added dynamically
 # take the top number_of_topics and put them in a new dataframe
 # then sort them by description alphabetically
 # then save that section of data into a dictionary where the csv number is the key and the value is the table
+
 def analyze_csv(input_csv, input_path, num_rows):
     dict_key = [int(s) for s in input_csv.split('_') if s.isdigit()]
     dict_key = str(dict_key)[1:len(dict_key)-2]
@@ -99,29 +106,23 @@ footer_style = ParagraphStyle(
     alignment=1  # Center alignment
 )
 
-def fit_topic_to_two_pages(topic_data, table_style, col_width, max_height=1080):
-    rows = []
-    style = TableStyle([
-        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('LEFTPADDING', (0,0), (-1,-1), 6),
-        ('RIGHTPADDING', (0,0), (-1,-1), 6),
-        ('TOPPADDING', (0,0), (-1,-1), 0),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
-        ('FONTNAME', (0,0), (-1,-1), 'CrimsonText'), 
-    ])
-    for _, row in topic_data.iterrows():
-        para = Paragraph(str(row.iloc[1]), table_style)
-        test_rows = rows + [[para]]
-        test_table = Table(test_rows, colWidths=col_width)
-        test_table.setStyle(style)
-        w, h = test_table.wrapOn(None, col_width[0], max_height)
-        if h > max_height:
-            break
-        rows.append([para])
-    return rows
 
 def generate_two_page_topic_pdf(topic_key, topic_data, table_style, col_width, output_path):
+
+    def count_to_color(this_count):
+        if LOG_COLOR: 
+            gray_val = math.log(this_count, LOG_VAL)
+            gray_val = gray_val - LOG_SUB #this is rough I want to better estimate this
+        else:
+            gray_val = max(0.0, min(1.0, this_count / BLACK_COUNT))
+        print('gray_val: ' + str(gray_val))
+        print('count:' + str(this_count))
+        if gray_val > 1:
+            gray_val = 1
+        gray_val = 1 - gray_val
+        gray_color = Color(gray_val, gray_val, gray_val)
+        return gray_color
+
     # Try adding rows until we get exactly 2 pages
     max_rows = len(topic_data)
     min_rows = 1
@@ -198,7 +199,16 @@ def generate_two_page_topic_pdf(topic_key, topic_data, table_style, col_width, o
     
     rows = []
     for _, row in topic_data.head(best_rows).iterrows():
-        para = Paragraph(str(row.iloc[1]), table_style)
+        gray_color = count_to_color(row.iloc[0])
+
+                # Create a paragraph style with dynamic grayscale color
+        dynamic_style = ParagraphStyle(
+            'DynamicStyle',
+            parent=table_style,
+            textColor=gray_color,
+        )
+
+        para = Paragraph(str(row.iloc[1]), dynamic_style)
         rows.append([para])
     table = Table(rows, colWidths=col_width)
     table.setStyle(TableStyle([
