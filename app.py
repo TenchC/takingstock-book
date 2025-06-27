@@ -31,7 +31,7 @@ BLACK_COUNT = 10000
 
 # div count by 1000, if count_color > 1 count_color = 1
 # PDF Vars
-outputPDF = 'output.pdf'
+outputPDF = 'outputs/list/output.pdf'
 page_size = [432, 648] #in points, 72 points = 1 inch
 #margin settings (in points) (72 points = 1 inch)
 INNER_MARGIN = 90  # 1.25 inch
