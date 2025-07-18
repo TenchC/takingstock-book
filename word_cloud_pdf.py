@@ -25,7 +25,8 @@ GLOBAL_PATH = os.path.dirname(os.path.abspath(__file__))
 TAKINGSTOCK_PATH = os.path.join(os.path.dirname(GLOBAL_PATH), 'takingstock/')
 
 INPUT_PATH  = os.path.join(GLOBAL_PATH, "input_csvs/word_cloud/")
-MODEL_PATH = STOPWORD_PATH = os.path.join(TAKINGSTOCK_PATH, "model_files/")
+MODEL_PATH =  os.path.join(GLOBAL_PATH, "model/")
+STOPWORD_PATH = os.path.join(TAKINGSTOCK_PATH, "model_files/")
 OUTPUT_PATH = os.path.join(GLOBAL_PATH, 'outputs/word_cloud/')
 
 PDF_DATA = {}
@@ -36,7 +37,7 @@ PAGE_SIZE   = [432, 648]
 
 #batch Processing
 BATCH_PROCESS = True
-PROCESS_SELECT = [27]
+PROCESS_SELECT = [11]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -66,7 +67,7 @@ def analyze_csv(input_csv, input_path, num_rows):
 
 
 def get_document_topic_weights_simple(model, bow_vector, topic_id):
-    # Handle invalid/empty cases
+    # this seems deprecated
     if not bow_vector:
         return 0
     
@@ -80,9 +81,9 @@ def get_document_topic_weights_simple(model, bow_vector, topic_id):
     
     # bow_vector should be a list of (word_id, count) tuples like [(0, 1), (5, 2)]
     doc_topics = model.get_document_topics(bow_vector, minimum_probability=0)
-    for w in doc_topics:
-        if w[1] > .1:
-            print("topic match, weight:", w[1], "topic", w[0])
+    # for w in doc_topics:
+    #     if w[1] > .1:
+    #         print("topic match, weight:", w[1], "topic", w[0])
     
     topic_weight = 0
     for topic, weight in doc_topics:
@@ -156,6 +157,7 @@ def preprocess(text, MY_STOPWORDS):
     text = text.lower()
     for token in gensim.utils.simple_preprocess(text):
         if token not in MY_STOPWORDS and len(token) > 3:
+            # print("Not stopped:", token)
             result.append(lemmatize_stemming(token))
     return result
 
@@ -167,8 +169,8 @@ def lemmatize_stemming(text):
 # open and read a csv file, and assign each row as an element in a list
 def read_csv(file_path):
     with open(file_path, 'r') as file:
-        data = file.read().replace('\n', '')
-    return data
+        data_list = file.read().splitlines()
+    return data_list
 
 
 #CUSTOM GRAYSCALE COLOUR FUNCTION 
@@ -191,7 +193,12 @@ GENDER_LIST = read_csv(os.path.join(STOPWORD_PATH, "stopwords_gender.csv"))
 ETH_LIST = read_csv(os.path.join(STOPWORD_PATH, "stopwords_ethnicity.csv"))
 AGE_LIST = read_csv(os.path.join(STOPWORD_PATH, "stopwords_age.csv"))                       
 SKIP_TOKEN_LIST = read_csv(os.path.join(STOPWORD_PATH, "skip_tokens.csv"))   
-MY_STOPWORDS = gensim.parsing.preprocessing.STOPWORDS.union(set(GENDER_LIST+ETH_LIST+AGE_LIST)) 
+# MY_STOPWORDS = gensim.parsing.preprocessing.STOPWORDS.union(set(GENDER_LIST+ETH_LIST+AGE_LIST+SKIP_TOKEN_LIST))
+MY_STOPWORDS = (GENDER_LIST+ETH_LIST+AGE_LIST+SKIP_TOKEN_LIST)
+
+
+# print("SKIP_TOKEN_LIST", SKIP_TOKEN_LIST) 
+# print("MY_STOPWORDS", MY_STOPWORDS)
 
 #set up dictionary
 DICT_PATH=os.path.join(MODEL_PATH,"dictionary.dict")
@@ -204,19 +211,39 @@ dictionary = corpora.Dictionary.load(MODEL_PATH+'model.id2word')
 MIN_SCORE = 0
 MAX_SCORE = .1
 
+# def gray_color(word, font_size, position, orientation, random_state=None, **kw):
+#     """Return an rgb() string whose gray level comes from the key_score_dict."""
+#     score = key_score_dict.get(word, None)
+#     print("gray_color", word, score)
+#     if score is None:
+#         return f"rgb(230, 230, 230)"  # Medium gray for None values
+    
+#     # Normalize score to 0-1 range
+#     normalized_score = (score - MIN_SCORE) / (MAX_SCORE - MIN_SCORE)
+    
+#     # Convert to grayscale (0: black → 255: white)
+#     g = int(normalized_score * 255)
+#     return f"rgb({g}, {g}, {g})"
+
 def gray_color(word, font_size, position, orientation, random_state=None, **kw):
     """Return an rgb() string whose gray level comes from the key_score_dict."""
-    score = key_score_dict.get(word, None)
-    print(word, score)
-    if score is None:
-        return f"rgb(255, 255, 255)"  # Medium gray for None values
-    
+    for stopword in MY_STOPWORDS:
+        if word in stopword or stopword in word:
+        # score = key_score_dict.get(word, None)
+        # print("gray_color", word, score)
+        # if score is None:
+            #print("stopped grey word:", word)
+            return f"rgb(230, 230, 230)"  # Medium gray for None values
+    else:
+        return f"rgb(0, 0, 0)"  # Medium gray for None values
+
     # Normalize score to 0-1 range
-    normalized_score = (score - MIN_SCORE) / (MAX_SCORE - MIN_SCORE)
+    # normalized_score = (score - MIN_SCORE) / (MAX_SCORE - MIN_SCORE)
     
     # Convert to grayscale (0: black → 255: white)
     g = int(normalized_score * 255)
     return f"rgb({g}, {g}, {g})"
+
 
 def get_all_topics_words(lda_model):
     # Get all topics with their word probabilities
@@ -255,14 +282,14 @@ for csv in CSV_LIST:
         #preprocess the text
         unproccessed_word = row[1][1]
         tokens = preprocess(unproccessed_word, MY_STOPWORDS)
-        print(tokens)
+        # print("token:", tokens)
         keyword_list.append(tokens)
         
         # Check if tokens is empty
         if not tokens:  # This is True when tokens is an empty list
             unproccessed_word_dict["FOOBAR"] = unproccessed_word
         else:
-            print('Unprocessed word dict ', unproccessed_word_dict.get(tokens[0], 'Key not found'))
+            # print('Unprocessed word dict ', unproccessed_word_dict.get(tokens[0], 'Key not found'))
             unproccessed_word_dict[tokens[0]] = unproccessed_word
     #remove empty lists
     for each in keyword_list:
