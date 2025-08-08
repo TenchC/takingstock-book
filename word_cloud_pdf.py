@@ -62,12 +62,6 @@ NUM_ROWS = 300
 print("CUTOFF is on")
 print("NUM_ROWS is", NUM_ROWS)
 
-EXPORT_EVERY_STEP = False
-if EXPORT_EVERY_STEP:
-    print("EXPORT_EVERY_STEP is on")
-
-i = 0
-
 # Word-cloud cosmetics
 FONT_MIN = 1         # adjust to taste
 WC_WIDTH, WC_HEIGHT = 3200, 4800    # px; higher = sharper
@@ -158,15 +152,6 @@ elif len(PROCESS_SELECT) > 0:
 else:
     print("Add numbers to PROCESS_SELECT or turn on batch processing")
 
-#export every step(0)
-if EXPORT_EVERY_STEP:
-    print("Export every step(0), preprocessed csvs")
-    print("exporting CSV_LIST, ", len(CSV_LIST), " csv(s) to export")
-    i = 0
-    for csv in CSV_LIST:
-        CSV_LIST[csv].to_csv(OUTPUT_PATH+str(i)+"_EXPORT_STEP_0_"+csv)
-        i+=1
-
 #---------- 0.5) Preprocessing and load model  -----------------------------------------------------
 def preprocess(text, MY_STOPWORDS):
     result = []
@@ -245,14 +230,17 @@ MAX_SCORE = .1
 def gray_color(word, font_size, position, orientation, random_state=None, **kw):
     """Return an rgb() string whose gray level comes from the key_score_dict."""
     for stopword in MY_STOPWORDS:
-        if word in stopword or stopword in word:
-        # score = key_score_dict.get(word, None)
-        # print("gray_color", word, score)
-        # if score is None:
-            #print("stopped grey word:", word)
-            return f"rgb(230, 230, 230)"  # Medium gray for None values
+        if stopword == word:
+            print("stopword == word:", word, "stopword:", stopword)
+            return f"rgb(0, 230, 0)"  # Green for perfect match
+        if stopword in word:
+            print("stopword in word:", word, "stopword:", stopword)
+            return f"rgb(0, 0, 230)"  # Blue for stopword in word match
+        if word in stopword:
+            print("word in stopword:", word, "stopword:", stopword)
+            return f"rgb(230, 0, 0)"  # Red for stopword in word match
     else:
-        return f"rgb(0, 0, 0)"  # Medium gray for None values
+        return f"rgb(0, 0, 0)"  # Black for no match (not in stopwords, good!)
 
     # Normalize score to 0-1 range
     # normalized_score = (score - MIN_SCORE) / (MAX_SCORE - MIN_SCORE)
@@ -317,11 +305,6 @@ for csv in CSV_LIST:
     if CUTOFF and len(keyword_list) > NUM_ROWS:
         keyword_list = keyword_list[:NUM_ROWS]
 
-    #export every step(1)
-    if EXPORT_EVERY_STEP:
-        print("Export every step(1), keyword list")
-        export_every_step_df = pd.DataFrame(keyword_list)
-        export_every_step_df.to_csv(OUTPUT_PATH+"EXPORT_STEP_1_"+csv)
 
     key_score_dict = {}
     for key in keyword_list:
@@ -341,11 +324,6 @@ for csv in CSV_LIST:
     #     elif len(bow_vector[i]) > 1:
     #         bow_vector[i] = [bow_vector[i][0]]
 
-#  #export every step(2)
-#     if EXPORT_EVERY_STEP:
-#         print("Export every step(2), bow vector")
-#         export_every_step_df = pd.DataFrame(bow_vector)
-#         export_every_step_df.to_csv(OUTPUT_PATH+"EXPORT_STEP_2_"+csv)
 
     sorted_topics = []
 
@@ -358,13 +336,6 @@ for csv in CSV_LIST:
     for i in range(len(sorted_topics)):
         if sorted_topics[i]== 0.015625:
             sorted_topics[i] = "blank"
-
-
- #export every step(3)
-    if EXPORT_EVERY_STEP:
-        print("Export every step(3), sorted topics")
-        export_every_step_df = pd.DataFrame(sorted_topics)
-        export_every_step_df.to_csv(OUTPUT_PATH+"EXPORT_STEP_3_"+csv)
 
 
 
