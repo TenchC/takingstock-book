@@ -29,15 +29,31 @@ MODEL_PATH =  os.path.join(GLOBAL_PATH, "model/")
 STOPWORD_PATH = os.path.join(TAKINGSTOCK_PATH, "model_files/")
 OUTPUT_PATH = os.path.join(GLOBAL_PATH, 'outputs/word_cloud/')
 
+# print(f"Paths: Input: {INPUT_PATH}, Model: {MODEL_PATH}, Stopwords: {STOPWORD_PATH}, Output: {OUTPUT_PATH}")
+
 PDF_DATA = {}
 OUT_PDF     = os.path.join(OUTPUT_PATH, "wordcloud")  # final file
 FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-Regular.ttf") 
 FONT_NAME   = "CrimsonText"
+FOOTER_FONT_FILE = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-SemiBold.ttf")
+FOOTER_FONT_NAME = "CrimsonText-SemiBold"
 PAGE_SIZE   = [432, 648]  
 
+# Margin and gutter settings
+OUTER_MARGIN = 36  # 0.5 inches
+INNER_MARGIN = 54  # 0.75 inches (larger for binding)
+TOP_MARGIN = 36    # 0.5 inches
+BOTTOM_MARGIN = 36 # 0.5 inches
+
+# Footer settings
+FOOTER_TEXT = "TOPIC: "  # Base text, topic number will be added dynamically
+FOOTER_FONT_SIZE = 10
+
+SIDE = "left"
+
 #batch Processing
-BATCH_PROCESS = True
-PROCESS_SELECT = [11]
+BATCH_PROCESS = False
+PROCESS_SELECT = [11, 27, 30]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -163,6 +179,7 @@ def preprocess(text, MY_STOPWORDS):
 
 
 stemmer = SnowballStemmer('english')
+
 def lemmatize_stemming(text):
     return stemmer.stem(WordNetLemmatizer().lemmatize(text, pos='v'))
 
@@ -271,7 +288,6 @@ for csv in CSV_LIST:
     CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0]
     print("Processing: " + CSV_NUMBER)
     this_topics_words = dict(all_topics_words[int(CSV_NUMBER)])
-   
 
     df = pd.read_csv(INPUT_PATH+csv).dropna(subset=["description", "count"])
 
@@ -280,7 +296,7 @@ for csv in CSV_LIST:
     unproccessed_word_dict = {}
     for row in df.iterrows():
         #preprocess the text
-        unproccessed_word = row[1][1]
+        unproccessed_word = row[1].iloc[1]
         tokens = preprocess(unproccessed_word, MY_STOPWORDS)
         # print("token:", tokens)
         keyword_list.append(tokens)
@@ -357,7 +373,6 @@ for csv in CSV_LIST:
     freqs  = dict(zip(df["description"], df["count"]))
    #relations = dict(zip(df['description'], map_values_to_range(sorted_topics)))
     relations = dict(zip(df['description'], sorted_topics))
-    PDF_DATA[CSV_NUMBER] = dict(zip(freqs, relations))
 
     # ---------- 3) BUILD WORD CLOUD ---------------------------------------------
     wc = (
@@ -375,41 +390,132 @@ for csv in CSV_LIST:
     tmp_png = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     wc.to_file(tmp_png.name)
 
-    # ---------- 4) RENDER WORD CLOUD ON A PDF PAGE ------------------------------
-    tmp_wc_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
+    # Store the word cloud data for later PDF creation
+    PDF_DATA[CSV_NUMBER] = {
+        'freqs': freqs,
+        'relations': relations,
+        'tmp_png': tmp_png.name,
+        'wc': wc,
+        'keyword_list': keyword_list,
+        'unprocessed_word_dict': unproccessed_word_dict,
+        'this_topics_words': this_topics_words,
+        'key_score_dict': key_score_dict
+    }
 
-    c = canvas.Canvas(tmp_wc_pdf.name, pagesize=PAGE_SIZE)
-    img = ImageReader(tmp_png.name)
+    # Toggle side for next iteration
+    if SIDE == "left":
+        SIDE = "right"
+    else:
+        SIDE = "left"
 
-    # Fit image to page (keep aspect ratio, centred)
+# ---------- 4) CREATE FINAL PDF WITH ALTERNATING PAGES -------------------------
+print("Creating final PDF with alternating pages...")
+
+# Register fonts
+pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
+pdfmetrics.registerFont(TTFont(FOOTER_FONT_NAME, FOOTER_FONT_FILE))
+
+# Create the final PDF
+final_pdf_path = OUT_PDF + '.pdf'
+c = canvas.Canvas(final_pdf_path, pagesize=PAGE_SIZE)
+
+# Process each CSV in order, alternating left/right
+current_side = "left"
+page_number = 1
+for csv in CSV_LIST:
+    CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0]
+    
+    if CSV_NUMBER not in PDF_DATA:
+        continue
+        
+    data = PDF_DATA[CSV_NUMBER]
+    tmp_png = data['tmp_png']
+    wc = data['wc']
+    
+    # Calculate margins based on current side
+    if current_side == "left":
+        left_margin = OUTER_MARGIN
+        right_margin = INNER_MARGIN
+    else:
+        left_margin = INNER_MARGIN
+        right_margin = OUTER_MARGIN
+    
+    # Calculate available space for word cloud
+    available_width = PAGE_SIZE[0] - left_margin - right_margin
+    available_height = PAGE_SIZE[1] - TOP_MARGIN - BOTTOM_MARGIN
+    
+    # Load image
+    img = ImageReader(tmp_png)
     img_width, img_height = wc.to_image().size
-    page_w, page_h = PAGE_SIZE
-    scale = min((page_w / img_width) * 0.9, (page_h / img_height) * 0.9)  # 90 % inset
-    draw_w, draw_h = img_width * scale, img_height * scale
-    x = (page_w - draw_w) / 2
-    y = (page_h - draw_h) / 2
+    
+    # Calculate scale to fit within available space
+    scale_x = available_width / img_width
+    scale_y = available_height / img_height
+    scale = min(scale_x, scale_y) * 0.9  # 90% of max size for some padding
+    
+    # Calculate final dimensions
+    draw_w = img_width * scale
+    draw_h = img_height * scale
+    
+    # Calculate position (centered within available space)
+    x = left_margin + (available_width - draw_w) / 2
+    y = BOTTOM_MARGIN + (available_height - draw_h) / 2
+    
+    # Draw the word cloud
     c.drawImage(img, x, y, width=draw_w, height=draw_h, mask="auto")
+    
+    # Add footer
+    c.saveState()
+    c.setFont(FOOTER_FONT_NAME, FOOTER_FONT_SIZE)
+    current_footer_text = FOOTER_TEXT + str(CSV_NUMBER)
+    
+    # Get first three items from key_score_dict for the second line
+    key_score_dict = data.get('key_score_dict', {})
+    if key_score_dict:
+        # Get the first three keywords and extract the unprocessed words
+        first_three_keywords = []
+        for word in key_score_dict.keys():
+            if word not in MY_STOPWORDS and key_score_dict[word] not in [0, None]:
+                first_three_keywords.append(word)
+            if len(first_three_keywords) == 3:
+                break
+        keywords_text = ", ".join(first_three_keywords)
+    else:
+        keywords_text = "No topic words available"
+    
+    # Choose footer alignment based on even/odd page (left/right side)
+    if current_side == "left":
+        footer_x = left_margin  # Left-aligned on left pages
+    else:
+        footer_x = PAGE_SIZE[0] - right_margin - c.stringWidth(current_footer_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE)  # Right-aligned on right pages
+    
+    # Draw the topic line
+    c.drawString(footer_x, BOTTOM_MARGIN - 10, current_footer_text)
+    
+    # Draw the keywords line (same font and size)
+    if current_side == "left":
+        keywords_x = left_margin  # Left-aligned on left pages
+    else:
+        keywords_x = PAGE_SIZE[0] - right_margin - c.stringWidth(keywords_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE)  # Right-aligned on right pages
+    
+    c.drawString(keywords_x, BOTTOM_MARGIN - 25, keywords_text)
+    c.restoreState()
+    
     c.showPage()
-    c.save()
+    
+    # Toggle side for next page
+    current_side = "right" if current_side == "left" else "left"
+    page_number += 1
 
-    # ---------- 5) CREATE NEW PDF WITH WORD CLOUD PAGE ONLY ---------------------
+c.save()
+print(f"✅ Final word-cloud PDF created → {final_pdf_path}")
 
-    pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
-    temp_out = OUT_PDF+CSV_NUMBER+'.pdf'
-    c = canvas.Canvas(OUT_PDF+CSV_NUMBER+'.pdf', pagesize=PAGE_SIZE)
-    img = ImageReader(tmp_png.name)
-
-    # Fit image to page (keep aspect ratio, centred)
-    img_width, img_height = wc.to_image().size
-    page_w, page_h = PAGE_SIZE
-    scale = min((page_w / img_width) * 0.9, (page_h / img_height) * 0.9)  # 90 % inset
-    draw_w, draw_h = img_width * scale, img_height * scale
-    x = (page_w - draw_w) / 2
-    y = (page_h - draw_h) / 2
-    c.drawImage(img, x, y, width=draw_w, height=draw_h, mask="auto")
-    c.showPage()
-    c.save()
-
-    print(f"✅ Word-cloud PDF created → {temp_out}")
+# Clean up temporary files
+for csv in CSV_LIST:
+    CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0]
+    if CSV_NUMBER in PDF_DATA:
+        try:
+            os.unlink(PDF_DATA[CSV_NUMBER]['tmp_png'])
+        except:
+            pass
 
