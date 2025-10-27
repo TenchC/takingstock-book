@@ -13,6 +13,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+from pick import pick
 
 
 import gensim
@@ -49,18 +50,23 @@ BOTTOM_MARGIN = 36 # 0.5 inches
 FOOTER_TEXT = "TOPIC: "  # Base text, topic number will be added dynamically
 FOOTER_FONT_SIZE = 10
 
+# Cache for word colors
+_word_color_cache = {}
+
 SIDE = "left"
 
 #batch Processing
 BATCH_PROCESS = False
-PROCESS_SELECT = [11, 27, 30]
+PROCESS_SELECT = [11]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
 CUTOFF = True
-NUM_ROWS = 300
-print("CUTOFF is on")
+NUM_ROWS = 100
+print(f"CUTOFF is {CUTOFF}")
 print("NUM_ROWS is", NUM_ROWS)
+MANUAL_PICK = True
+print(f"MANUAL PICK IS {MANUAL_PICK}")
 
 # Word-cloud cosmetics
 FONT_MIN = 1         # adjust to taste
@@ -198,6 +204,16 @@ SKIP_TOKEN_LIST = read_csv(os.path.join(STOPWORD_PATH, "skip_tokens.csv"))
 # MY_STOPWORDS = gensim.parsing.preprocessing.STOPWORDS.union(set(GENDER_LIST+ETH_LIST+AGE_LIST+SKIP_TOKEN_LIST))
 MY_STOPWORDS = (GENDER_LIST+ETH_LIST+AGE_LIST+SKIP_TOKEN_LIST)
 
+#limit the length of the stopwords to 25 characters to clear out outliers in dataset
+new_stopwords = []
+for word in MY_STOPWORDS:
+    if len(word) <= 25:
+        new_stopwords.append(word)
+    else:
+        print(f"Skipping stopword due to length (>25 chars): {word}")
+MY_STOPWORDS = new_stopwords
+
+
 
 # print("SKIP_TOKEN_LIST", SKIP_TOKEN_LIST) 
 # print("MY_STOPWORDS", MY_STOPWORDS)
@@ -229,25 +245,65 @@ MAX_SCORE = .1
 
 def gray_color(word, font_size, position, orientation, random_state=None, **kw):
     """Return an rgb() string whose gray level comes from the key_score_dict."""
-    for stopword in MY_STOPWORDS:
-        if stopword == word:
-            print("stopword == word:", word, "stopword:", stopword)
-            return f"rgb(0, 230, 0)"  # Green for perfect match
-        if stopword in word:
-            print("stopword in word:", word, "stopword:", stopword)
-            return f"rgb(0, 0, 230)"  # Blue for stopword in word match
-        if word in stopword:
-            print("word in stopword:", word, "stopword:", stopword)
-            return f"rgb(230, 0, 0)"  # Red for stopword in word match
-    else:
-        return f"rgb(0, 0, 0)"  # Black for no match (not in stopwords, good!)
+    global _word_color_cache 
+    if MANUAL_PICK:
+        # Check cache first to avoid repeated prompts for the same word
+        if word in _word_color_cache:
+            return _word_color_cache[word]
 
-    # Normalize score to 0-1 range
-    # normalized_score = (score - MIN_SCORE) / (MAX_SCORE - MIN_SCORE)
-    
-    # Convert to grayscale (0: black → 255: white)
-    g = int(normalized_score * 255)
-    return f"rgb({g}, {g}, {g})"
+        chosen_color = None
+        
+        # Iterate through stopwords to find the first match based on priority
+        # The first match found will trigger the prompt and return, ensuring only one prompt per word.
+        for stopword in MY_STOPWORDS:
+            title = None
+            if stopword == word:
+                title = f"Word '{word}' is an exact stopword match with '{stopword}'. Choose color:"
+            elif stopword in word:
+                # This means 'word' contains 'stopword' (e.g., word="people", stopword="peo")
+                title = f"Word '{word}' contains stopword '{stopword}'. Choose color:"
+            elif word in stopword:
+                # This means 'stopword' contains 'word' (e.g., word="people", stopword="massaii people")
+                title = f"Word '{word}' contains stopword '{stopword}'. Choose color:"
+            
+            if title: # A match was found
+                options = [
+                    "Black (rgb(0,0,0))",
+                    "Gray (rgb(180,180,180))" # Using a medium gray for choice
+                ]
+                selected_option, index = pick(options, title)
+                
+                if index == 0: # User chose Black
+                    print(f"User chose Black for word '{word}'.")
+                    chosen_color = f"rgb(0,0,0)"
+                else: # User chose Gray
+                    print(f"User chose Gray for word '{word}'.")
+                    chosen_color = f"rgb(180, 180, 180)"
+                
+                _word_color_cache[word] = chosen_color # Cache the user's choice for this word
+                return chosen_color # Return immediately after the first match and user interaction
+
+        # If the loop completes without finding any stopword match
+        chosen_color = f"rgb(0, 0, 0)"  # Black for no match (not in stopwords, good!)
+        _word_color_cache[word] = chosen_color # Cache this default choice too
+        return chosen_color
+    else:
+        for stopword in MY_STOPWORDS:
+            if word == stopword:
+                print(f'Word: {word} equals stopword: {stopword}')
+                return f"rgb(0,0,255)"
+            elif word in stopword:
+                print(f'Word: {word} in stopword: {stopword}')
+                return f"rgb(255, 0, 0)"
+                
+            elif stopword in word:
+                print(f'Stopword {stopword} in Word: {word}')
+                return f"rgb(0,255,0)"
+            else:
+                print(f'Word {word} cleared')
+                return f"rgb(0,0,0)"
+            
+
 
 
 def get_all_topics_words(lda_model):
@@ -276,7 +332,6 @@ for csv in CSV_LIST:
     CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0]
     print("Processing: " + CSV_NUMBER)
     this_topics_words = dict(all_topics_words[int(CSV_NUMBER)])
-
     df = pd.read_csv(INPUT_PATH+csv).dropna(subset=["description", "count"])
 
     keyword_list = []
@@ -342,6 +397,7 @@ for csv in CSV_LIST:
     # Frequencies for WordCloud
     #may need to check
     freqs  = dict(zip(df["description"], df["count"]))
+    # print("freqs", freqs)
    #relations = dict(zip(df['description'], map_values_to_range(sorted_topics)))
     relations = dict(zip(df['description'], sorted_topics))
 
