@@ -204,16 +204,6 @@ SKIP_TOKEN_LIST = read_csv(os.path.join(STOPWORD_PATH, "skip_tokens.csv"))
 # MY_STOPWORDS = gensim.parsing.preprocessing.STOPWORDS.union(set(GENDER_LIST+ETH_LIST+AGE_LIST+SKIP_TOKEN_LIST))
 MY_STOPWORDS = (GENDER_LIST+ETH_LIST+AGE_LIST+SKIP_TOKEN_LIST)
 
-#limit the length of the stopwords to 25 characters to clear out outliers in dataset
-new_stopwords = []
-for word in MY_STOPWORDS:
-    if len(word) <= 25:
-        new_stopwords.append(word)
-    else:
-        print(f"Skipping stopword due to length (>25 chars): {word}")
-MY_STOPWORDS = new_stopwords
-
-
 
 # print("SKIP_TOKEN_LIST", SKIP_TOKEN_LIST) 
 # print("MY_STOPWORDS", MY_STOPWORDS)
@@ -228,6 +218,15 @@ dictionary = corpora.Dictionary.load(MODEL_PATH+'model.id2word')
 # MAX_SCORE = max(valid_scores)
 MIN_SCORE = 0
 MAX_SCORE = .1
+
+stopword_df_path = os.path.join(OUTPUT_PATH, "topic_word_stopword.csv")
+
+if os.path.exists(stopword_df_path):
+    topic_word_stopword_df = pd.read_csv(stopword_df_path)
+    print(f"Loaded existing stopword data from {stopword_df_path}")
+else:
+    topic_word_stopword_df = pd.DataFrame(columns=['topic', 'word', 'stopword', 'stopped'])
+    print(f"Created new stopword data file at {stopword_df_path}")
 
 # def gray_color(word, font_size, position, orientation, random_state=None, **kw):
 #     """Return an rgb() string whose gray level comes from the key_score_dict."""
@@ -252,10 +251,33 @@ def gray_color(word, font_size, position, orientation, random_state=None, **kw):
             return _word_color_cache[word]
 
         chosen_color = None
-        
+        global CSV_NUMBER # Access the global CSV_NUMBER for the current topic
+        global topic_word_stopword_df # Access the global DataFrame
+
+        # Check if the word for the current topic has already been processed and stored
+        # in the topic_word_stopword_df.
+        # This prevents re-prompting for words whose color has already been decided
+        # and recorded in a previous run or earlier in the current run.
+        existing_entry = topic_word_stopword_df[
+            (topic_word_stopword_df['topic'] == CSV_NUMBER) & 
+            (topic_word_stopword_df['word'] == word)
+        ]
+
+        if not existing_entry.empty:
+            # If an entry exists, determine the color based on the 'stopped' column
+            if existing_entry.iloc[0]['stopped'] == False:
+                # If 'stopped' is False, it means the user chose Black (not to stop it)
+                chosen_color = "rgb(0,0,0)" 
+            else:
+                # If 'stopped' is True, it means the user chose Gray (to stop it)
+                chosen_color = "rgb(180,180,180)"
+            
+            _word_color_cache[word] = chosen_color # Cache this decision
+            return chosen_color # Return the color immediately
         # Iterate through stopwords to find the first match based on priority
         # The first match found will trigger the prompt and return, ensuring only one prompt per word.
         for stopword in MY_STOPWORDS:
+            
             title = None
             if stopword == word:
                 title = f"Word '{word}' is an exact stopword match with '{stopword}'. Choose color:"
@@ -276,10 +298,11 @@ def gray_color(word, font_size, position, orientation, random_state=None, **kw):
                 if index == 0: # User chose Black
                     print(f"User chose Black for word '{word}'.")
                     chosen_color = f"rgb(0,0,0)"
+                    topic_word_stopword_df.loc[len(topic_word_stopword_df)] = {'topic': CSV_NUMBER, 'word': word, 'stopword': stopword, 'stopped': False}
                 else: # User chose Gray
                     print(f"User chose Gray for word '{word}'.")
                     chosen_color = f"rgb(180, 180, 180)"
-                
+                    topic_word_stopword_df.loc[len(topic_word_stopword_df)] = {'topic': CSV_NUMBER, 'word': word, 'stopword': stopword, 'stopped': True}
                 _word_color_cache[word] = chosen_color # Cache the user's choice for this word
                 return chosen_color # Return immediately after the first match and user interaction
 
@@ -415,6 +438,7 @@ for csv in CSV_LIST:
 
     # Save to a temp PNG
     tmp_png = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+
     wc.to_file(tmp_png.name)
 
     # Store the word cloud data for later PDF creation
@@ -445,6 +469,9 @@ pdfmetrics.registerFont(TTFont(FOOTER_FONT_NAME, FOOTER_FONT_FILE))
 # Create the final PDF
 final_pdf_path = OUT_PDF + '.pdf'
 c = canvas.Canvas(final_pdf_path, pagesize=PAGE_SIZE)
+
+#export stopword data to csv
+topic_word_stopword_df.to_csv(os.path.join(OUTPUT_PATH, "topic_word_stopword.csv"), index=False)
 
 # Process each CSV in order, alternating left/right
 current_side = "left"
