@@ -53,11 +53,14 @@ FOOTER_FONT_SIZE = 10
 # Cache for word colors
 _word_color_cache = {}
 
+# List to track words that pass/clear
+passed_words_list = []
+
 SIDE = "left"
 
 #batch Processing
-BATCH_PROCESS = False
-PROCESS_SELECT = [11]
+BATCH_PROCESS = True
+PROCESS_SELECT = [11,17]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -65,7 +68,7 @@ CUTOFF = True
 NUM_ROWS = 100
 print(f"CUTOFF is {CUTOFF}")
 print("NUM_ROWS is", NUM_ROWS)
-MANUAL_PICK = True
+MANUAL_PICK = False
 print(f"MANUAL PICK IS {MANUAL_PICK}")
 
 # Word-cloud cosmetics
@@ -223,9 +226,12 @@ stopword_df_path = os.path.join(OUTPUT_PATH, "topic_word_stopword.csv")
 
 if os.path.exists(stopword_df_path):
     topic_word_stopword_df = pd.read_csv(stopword_df_path)
+    # Add 'Replace' column if it doesn't exist
+    if 'Replace' not in topic_word_stopword_df.columns:
+        topic_word_stopword_df['Replace'] = ''
     print(f"Loaded existing stopword data from {stopword_df_path}")
 else:
-    topic_word_stopword_df = pd.DataFrame(columns=['topic', 'word', 'stopword', 'stopped'])
+    topic_word_stopword_df = pd.DataFrame(columns=['word', 'stopword', 'stopped', 'Replace'])
     print(f"Created new stopword data file at {stopword_df_path}")
 
 # def gray_color(word, font_size, position, orientation, random_state=None, **kw):
@@ -259,21 +265,34 @@ def gray_color(word, font_size, position, orientation, random_state=None, **kw):
         # This prevents re-prompting for words whose color has already been decided
         # and recorded in a previous run or earlier in the current run.
         existing_entry = topic_word_stopword_df[
-            (topic_word_stopword_df['topic'] == CSV_NUMBER) & 
             (topic_word_stopword_df['word'] == word)
         ]
 
         if not existing_entry.empty:
             # If an entry exists, determine the color based on the 'stopped' column
-            if existing_entry.iloc[0]['stopped'] == False:
+            stopped_value = existing_entry.iloc[0]['stopped']
+            replace_value = existing_entry.iloc[0].get('Replace', '') if 'Replace' in existing_entry.columns else ''
+            
+            # Check if stopped is empty (None, NaN, empty string)
+            if pd.isna(stopped_value) or stopped_value == '' or stopped_value is None:
+                # If stopped is empty, check the Replace column
+                if pd.notna(replace_value) and replace_value != '':
+                    # If Replace has a value, set color to black
+                    chosen_color = "rgb(0,0,0)"
+                    _word_color_cache[word] = chosen_color
+                    return chosen_color
+                # If Replace is also empty, continue to other logic below
+            elif stopped_value == False:
                 # If 'stopped' is False, it means the user chose Black (not to stop it)
                 chosen_color = "rgb(0,0,0)" 
-            else:
+            elif stopped_value == True:
                 # If 'stopped' is True, it means the user chose Gray (to stop it)
                 chosen_color = "rgb(180,180,180)"
             
-            _word_color_cache[word] = chosen_color # Cache this decision
-            return chosen_color # Return the color immediately
+            # Only return if we've set a color (i.e., stopped was not empty/None)
+            if chosen_color is not None:
+                _word_color_cache[word] = chosen_color
+                return chosen_color
         # Iterate through stopwords to find the first match based on priority
         # The first match found will trigger the prompt and return, ensuring only one prompt per word.
         for stopword in MY_STOPWORDS:
@@ -298,11 +317,11 @@ def gray_color(word, font_size, position, orientation, random_state=None, **kw):
                 if index == 0: # User chose Black
                     print(f"User chose Black for word '{word}'.")
                     chosen_color = f"rgb(0,0,0)"
-                    topic_word_stopword_df.loc[len(topic_word_stopword_df)] = {'topic': CSV_NUMBER, 'word': word, 'stopword': stopword, 'stopped': False}
+                    topic_word_stopword_df.loc[len(topic_word_stopword_df)] = {'word': word, 'stopword': stopword, 'stopped': False}
                 else: # User chose Gray
                     print(f"User chose Gray for word '{word}'.")
                     chosen_color = f"rgb(180, 180, 180)"
-                    topic_word_stopword_df.loc[len(topic_word_stopword_df)] = {'topic': CSV_NUMBER, 'word': word, 'stopword': stopword, 'stopped': True}
+                    topic_word_stopword_df.loc[len(topic_word_stopword_df)] = {'word': word, 'stopword': stopword, 'stopped': True}
                 _word_color_cache[word] = chosen_color # Cache the user's choice for this word
                 return chosen_color # Return immediately after the first match and user interaction
 
@@ -311,20 +330,22 @@ def gray_color(word, font_size, position, orientation, random_state=None, **kw):
         _word_color_cache[word] = chosen_color # Cache this default choice too
         return chosen_color
     else:
-        for stopword in MY_STOPWORDS:
-            if word == stopword:
-                print(f'Word: {word} equals stopword: {stopword}')
-                return f"rgb(0,0,255)"
-            elif word in stopword:
-                print(f'Word: {word} in stopword: {stopword}')
-                return f"rgb(255, 0, 0)"
-                
-            elif stopword in word:
-                print(f'Stopword {stopword} in Word: {word}')
-                return f"rgb(0,255,0)"
-            else:
-                print(f'Word {word} cleared')
-                return f"rgb(0,0,0)"
+        # Non-MANUAL_PICK mode
+        existing_entry = topic_word_stopword_df[
+            (topic_word_stopword_df['word'] == word)
+        ]
+
+        if not existing_entry.empty:
+            stopped_value = existing_entry.iloc[0]['stopped']
+            if stopped_value is True:
+                return "rgb(200,200,200)"
+            elif stopped_value is False:
+                return "rgb(0,0,0)"
+
+        print(f'Word {word} cleared')
+        global passed_words_list
+        passed_words_list.append(word)
+        return "rgb(0,0,0)"
             
 
 
@@ -420,6 +441,34 @@ for csv in CSV_LIST:
     # Frequencies for WordCloud
     #may need to check
     freqs  = dict(zip(df["description"], df["count"]))
+    
+    # Preprocess: Replace words based on "Replace" column in topic_word_stopword_df
+    # If "stopped" is empty and "Replace" has a value, replace the word
+    if 'Replace' in topic_word_stopword_df.columns:
+        words_to_replace = {}
+        for idx, row in topic_word_stopword_df.iterrows():
+            word = row['word']
+            stopped_value = row.get('stopped', None)
+            replace_value = row.get('Replace', '')
+            
+            # Check if stopped is empty (None, NaN, empty string) and Replace has a value
+            if (pd.isna(stopped_value) or stopped_value == '' or stopped_value is None) and \
+               pd.notna(replace_value) and replace_value != '':
+                # If word exists in freqs, mark it for replacement
+                if word in freqs:
+                    words_to_replace[word] = replace_value
+        
+        # Perform replacements and merge counts if replace value already exists
+        for old_word, new_word in words_to_replace.items():
+            if old_word in freqs:
+                count = freqs.pop(old_word)
+                # If new_word already exists, add the counts together
+                if new_word in freqs:
+                    freqs[new_word] += count
+                else:
+                    freqs[new_word] = count
+                print(f"Replaced '{old_word}' with '{new_word}' (count: {count})")
+    
     # print("freqs", freqs)
    #relations = dict(zip(df['description'], map_values_to_range(sorted_topics)))
     relations = dict(zip(df['description'], sorted_topics))
@@ -472,6 +521,12 @@ c = canvas.Canvas(final_pdf_path, pagesize=PAGE_SIZE)
 
 #export stopword data to csv
 topic_word_stopword_df.to_csv(os.path.join(OUTPUT_PATH, "topic_word_stopword.csv"), index=False)
+
+#export passed words to csv (remove duplicates first)
+passed_words_df = pd.DataFrame({'word': passed_words_list})
+passed_words_df = passed_words_df.drop_duplicates()
+passed_words_df = passed_words_df.sort_values(by='word')
+passed_words_df.to_csv(os.path.join(OUTPUT_PATH, "passed words.csv"), index=False)
 
 # Process each CSV in order, alternating left/right
 current_side = "left"
