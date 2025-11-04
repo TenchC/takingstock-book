@@ -59,8 +59,8 @@ passed_words_list = []
 SIDE = "left"
 
 #batch Processing
-BATCH_PROCESS = True
-PROCESS_SELECT = [11,17]
+BATCH_PROCESS = False
+PROCESS_SELECT = [11]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -70,6 +70,20 @@ print(f"CUTOFF is {CUTOFF}")
 print("NUM_ROWS is", NUM_ROWS)
 MANUAL_PICK = False
 print(f"MANUAL PICK IS {MANUAL_PICK}")
+
+PINK_COLOR = "rgb(241, 194, 192)"
+# GREEN_COLOR = "rgb(192, 241, 194)"
+# BLUE_COLOR = "rgb(192, 194, 241)"
+CYAN_COLOR = "rgb(114, 195, 220)"
+PURPLE_COLOR = "rgb(139, 131, 187)"
+YELLOW_COLOR = "rgb(245, 193, 88)"
+BLACK_COLOR = "rgb(0,0,0)"
+GRAY_COLOR = "rgb(200,200,200)"
+
+STOPWORD_COLOR = GRAY_COLOR
+WORD_COLOR = PURPLE_COLOR
+
+
 
 # Word-cloud cosmetics
 FONT_MIN = 1         # adjust to taste
@@ -338,14 +352,14 @@ def gray_color(word, font_size, position, orientation, random_state=None, **kw):
         if not existing_entry.empty:
             stopped_value = existing_entry.iloc[0]['stopped']
             if stopped_value is True:
-                return "rgb(200,200,200)"
+                return STOPWORD_COLOR
             elif stopped_value is False:
-                return "rgb(0,0,0)"
+                return WORD_COLOR
 
         print(f'Word {word} cleared')
         global passed_words_list
         passed_words_list.append(word)
-        return "rgb(0,0,0)"
+        return WORD_COLOR
             
 
 
@@ -520,7 +534,9 @@ final_pdf_path = OUT_PDF + '.pdf'
 c = canvas.Canvas(final_pdf_path, pagesize=PAGE_SIZE)
 
 #export stopword data to csv
-topic_word_stopword_df.to_csv(os.path.join(OUTPUT_PATH, "topic_word_stopword.csv"), index=False)
+stopword_csv_path = os.path.join(OUTPUT_PATH, "topic_word_stopword.csv")
+if not os.path.exists(stopword_csv_path):
+    topic_word_stopword_df.to_csv(stopword_csv_path, index=False)
 
 #export passed words to csv (remove duplicates first)
 passed_words_df = pd.DataFrame({'word': passed_words_list})
