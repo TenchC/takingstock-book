@@ -60,7 +60,7 @@ SIDE = "left"
 
 #batch Processing
 BATCH_PROCESS = False
-PROCESS_SELECT = [11]
+PROCESS_SELECT = [11,38, 61]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -86,17 +86,233 @@ WORD_COLOR = PURPLE_COLOR
 
 
 # Word-cloud cosmetics
-FONT_MIN = 1         # adjust to taste
+FONT_MIN = 4         # adjust to taste
+FONT_MAX = 600        # Maximum font size - will be scaled per topic based on global proportions
 WC_WIDTH, WC_HEIGHT = 3200, 4800    # px; higher = sharper
-BACKGROUND = "white"      
-WEIGHT_MIN, WEIGHT_MAX = 0, .08
+BACKGROUND = "white"
+
+# Scaling configuration
+USE_LOG_SCALE = False  # Set to True for logarithmic scaling, False for linear scaling
+                       # Linear scaling preserves proportional relationships (e.g., 493762/16000000)      
 # -----------------------------------------------------------------------------
 def analyze_csv(input_csv, input_path, num_rows):
     df = pd.read_csv(input_path+input_csv)
     df = df.dropna()
     if CUTOFF:
         df = df.head(num_rows)
-    return input_csv, df, 
+    return input_csv, df,
+
+
+def build_freqs_with_replacements(df, topic_word_stopword_df):
+    """
+    Build frequency dictionary from dataframe and apply word replacements.
+    
+    Args:
+        df: DataFrame with 'description' and 'count' columns
+        topic_word_stopword_df: DataFrame with word replacement rules
+    
+    Returns:
+        Dictionary mapping words to their counts (after replacements)
+    """
+    freqs = dict(zip(df["description"], df["count"]))
+    
+    # Preprocess: Replace words based on "Replace" column in topic_word_stopword_df
+    # If "stopped" is empty and "Replace" has a value, replace the word
+    if 'Replace' in topic_word_stopword_df.columns:
+        words_to_replace = {}
+        for idx, row in topic_word_stopword_df.iterrows():
+            word = row['word']
+            stopped_value = row.get('stopped', None)
+            replace_value = row.get('Replace', '')
+            
+            # Check if stopped is empty (None, NaN, empty string) and Replace has a value
+            if (pd.isna(stopped_value) or stopped_value == '' or stopped_value is None) and \
+               pd.notna(replace_value) and replace_value != '':
+                # If word exists in freqs, mark it for replacement
+                if word in freqs:
+                    words_to_replace[word] = replace_value
+        
+        # Perform replacements and merge counts if replace value already exists
+        for old_word, new_word in words_to_replace.items():
+            if old_word in freqs:
+                count = freqs.pop(old_word)
+                # If new_word already exists, add the counts together
+                if new_word in freqs:
+                    freqs[new_word] += count
+                else:
+                    freqs[new_word] = count
+                print(f"Replaced '{old_word}' with '{new_word}' (count: {count})")
+    
+    return freqs
+
+
+def compute_global_scale(all_freqs_dicts, use_log_scale=False):
+    """
+    Compute global min/max scaling across all frequency dictionaries.
+    
+    Args:
+        all_freqs_dicts: List of frequency dictionaries from all CSVs
+        use_log_scale: If True, uses log1p transform to reduce skew. If False, uses linear scaling.
+    
+    Returns:
+        Dictionary with 'min' and 'max' values for scaling, and 'use_log' flag
+    """
+    all_values = []
+    for freqs_dict in all_freqs_dicts:
+        for count in freqs_dict.values():
+            if count > 0:  # Only include positive values
+                all_values.append(count)
+    
+    if not all_values:
+        print("  WARNING: No frequency values found! Using fallback scale.")
+        return {'min': 0, 'max': 1, 'use_log': False}
+    
+    print(f"  Collected {len(all_values)} frequency values from {len(all_freqs_dicts)} CSVs")
+    print(f"  Raw values - min={min(all_values)}, max={max(all_values)}, mean={np.mean(all_values):.2f}, median={np.median(all_values):.2f}")
+    
+    if use_log_scale:
+        # Apply log1p transform to reduce skew
+        log_values = np.log1p(all_values)
+        min_val = np.min(log_values)
+        max_val = np.max(log_values)
+        
+        print(f"  After log1p - min={min_val:.4f}, max={max_val:.4f}, mean={np.mean(log_values):.4f}, median={np.median(log_values):.4f}")
+        
+        # Handle edge case where all values are the same
+        if min_val == max_val:
+            print(f"  WARNING: All log values are the same! Adding buffer.")
+            return {'min': min_val, 'max': max_val + 0.1, 'use_log': True}
+        
+        return {'min': min_val, 'max': max_val, 'use_log': True}
+    else:
+        # Use linear scaling
+        min_val = min(all_values)
+        max_val = max(all_values)
+        
+        print(f"  Linear scaling - min={min_val:.2f}, max={max_val:.2f}, mean={np.mean(all_values):.2f}")
+        
+        # Handle edge case where all values are the same
+        if min_val == max_val:
+            print(f"  WARNING: All values are the same! Adding buffer.")
+            return {'min': min_val, 'max': max_val + 1.0, 'use_log': False}
+        
+        return {'min': min_val, 'max': max_val, 'use_log': False}
+
+
+def scale_freqs(freqs, global_scale, csv_number=None, verbose=False):
+    """
+    Scale frequency dictionary using global min/max to ensure consistent sizing across CSVs.
+    
+    WordCloud normalizes frequencies internally, so we scale to preserve global proportions
+    while ensuring each cloud uses the full font size range.
+    
+    Args:
+        freqs: Dictionary mapping words to counts
+        global_scale: Dictionary with 'min', 'max', and 'use_log' from compute_global_scale
+        csv_number: Optional CSV number for logging
+        verbose: If True, print detailed scaling information
+    
+    Returns:
+        Scaled frequency dictionary that preserves global proportions
+    """
+    scaled_freqs = {}
+    min_val = global_scale['min']
+    max_val = global_scale['max']
+    use_log = global_scale.get('use_log', False)
+    scale_range = max_val - min_val
+    
+    # Handle edge case where range is zero
+    if scale_range == 0:
+        print(f"  WARNING: Scale range is zero! Using fallback range.")
+        scale_range = 1.0
+    
+    # Find the local min/max for this topic
+    local_values = [count for count in freqs.values() if count > 0]
+    if not local_values:
+        # All frequencies are 0 or invalid
+        return {word: 1.0 for word in freqs.keys()}
+    
+    local_min = min(local_values)
+    local_max = max(local_values)
+    
+    scale_type = "log" if use_log else "linear"
+    if verbose:
+        print(f"  Scaling frequencies ({scale_type}) - global: [{min_val:.4f}, {max_val:.4f}], local: [{local_min}, {local_max}]")
+    
+    # Transform local min/max to global scale
+    if use_log:
+        local_min_transformed = np.log1p(local_min)
+        local_max_transformed = np.log1p(local_max)
+    else:
+        local_min_transformed = local_min
+        local_max_transformed = local_max
+    
+    # Calculate where this topic's max maps to in global scale (0 to 1)
+    local_max_normalized = (local_max_transformed - min_val) / scale_range
+    local_max_normalized = max(0.0, min(1.0, local_max_normalized))
+    
+    # Scale frequencies so that:
+    # - This topic's max word maps to local_max_normalized (preserving global proportion)
+    # - This topic's min word maps to 0 (or a small value)
+    # - WordCloud will normalize these internally, but the relative proportions are preserved
+    local_range = local_max_transformed - local_min_transformed
+    if local_range == 0:
+        local_range = 1.0  # Avoid division by zero
+    
+    example_transformations = []
+    for word, count in freqs.items():
+        if count > 0:
+            if use_log:
+                transformed = np.log1p(count)
+            else:
+                transformed = count
+            
+            # Normalize within local range (0 to 1 for this topic)
+            local_normalized = (transformed - local_min_transformed) / local_range
+            local_normalized = max(0.0, min(1.0, local_normalized))
+            
+            # Scale to global proportion: map local normalized to global normalized range
+            # The max word in this topic should map to local_max_normalized
+            # The min word should map to a value proportional to global min
+            global_min_normalized = (local_min_transformed - min_val) / scale_range
+            global_min_normalized = max(0.0, min(1.0, global_min_normalized))
+            
+            # Map local normalized [0, 1] to global normalized [global_min_normalized, local_max_normalized]
+            global_normalized = global_min_normalized + local_normalized * (local_max_normalized - global_min_normalized)
+            
+            # Use the global normalized value directly (WordCloud will normalize internally)
+            # But multiply by a large number to ensure WordCloud uses the full range
+            # This preserves the global proportions
+            scaled_val = global_normalized * 1000.0  # Large multiplier to preserve precision
+            scaled_freqs[word] = scaled_val
+            
+            # Collect examples for logging
+            if verbose and len(example_transformations) < 5:
+                if use_log:
+                    example_transformations.append((word, count, transformed, local_normalized, global_normalized, scaled_val))
+                else:
+                    example_transformations.append((word, count, None, local_normalized, global_normalized, scaled_val))
+        else:
+            scaled_freqs[word] = 1.0  # Minimum weight for zero counts
+    
+    if verbose and example_transformations:
+        if use_log:
+            print(f"  Example transformations (word, original, log, local_norm, global_norm, scaled):")
+            for word, orig, trans, local_norm, global_norm, scaled in example_transformations:
+                print(f"    '{word}': {orig} -> log={trans:.4f} -> local_norm={local_norm:.4f} -> global_norm={global_norm:.4f} -> scaled={scaled:.2f}")
+        else:
+            print(f"  Example transformations (word, original, local_norm, global_norm, scaled):")
+            for word, orig, trans, local_norm, global_norm, scaled in example_transformations:
+                print(f"    '{word}': {orig} -> local_norm={local_norm:.4f} -> global_norm={global_norm:.4f} -> scaled={scaled:.2f}")
+    
+    if scaled_freqs:
+        scaled_values = list(scaled_freqs.values())
+        if verbose:
+            print(f"  Scaled values - min={min(scaled_values):.2f}, max={max(scaled_values):.2f}, mean={np.mean(scaled_values):.2f}")
+            print(f"  Global proportion: this topic's max maps to {local_max_normalized:.4f} of global max")
+    
+    # Return both scaled frequencies and the max proportion for setting max_font_size
+    return scaled_freqs, local_max_normalized 
 
 
 def get_document_topic_weights_simple(model, bow_vector, topic_id):
@@ -198,17 +414,6 @@ def read_csv(file_path):
     return data_list
 
 
-#CUSTOM GRAYSCALE COLOUR FUNCTION 
-# def gray_color(word, font_size, position, orientation, random_state=None, **kw):
-    # """Return an rgb() string whose gray level comes from the CSV's 'relation'."""
-    # rel = relations.get(word, 0)
-    # if rel == "outline":
-    #     return f"rgb(1, 0, 0)"
-    # elif rel == "italic":
-    #     return f"rgb(0, 1, 0)"
-    # g   = int( (1 - rel) * 255 )           # 0: black → 255: white
-    # return f"rgb({g}, {g}, {g})"
-
 #load the model
 lda_model_tfidf = gensim.models.LdaModel.load(MODEL_PATH+'model')
 lda_dict = corpora.Dictionary.load(MODEL_PATH+'model.id2word')
@@ -218,23 +423,13 @@ GENDER_LIST = read_csv(os.path.join(STOPWORD_PATH, "stopwords_gender.csv"))
 ETH_LIST = read_csv(os.path.join(STOPWORD_PATH, "stopwords_ethnicity.csv"))
 AGE_LIST = read_csv(os.path.join(STOPWORD_PATH, "stopwords_age.csv"))                       
 SKIP_TOKEN_LIST = read_csv(os.path.join(STOPWORD_PATH, "skip_tokens.csv"))   
-# MY_STOPWORDS = gensim.parsing.preprocessing.STOPWORDS.union(set(GENDER_LIST+ETH_LIST+AGE_LIST+SKIP_TOKEN_LIST))
 MY_STOPWORDS = (GENDER_LIST+ETH_LIST+AGE_LIST+SKIP_TOKEN_LIST)
-
-
-# print("SKIP_TOKEN_LIST", SKIP_TOKEN_LIST) 
-# print("MY_STOPWORDS", MY_STOPWORDS)
 
 #set up dictionary
 DICT_PATH=os.path.join(MODEL_PATH,"dictionary.dict")
 dictionary = corpora.Dictionary.load(MODEL_PATH+'model.id2word')
 
-# Calculate min/max once outside the function
-# valid_scores = [v for v in key_score_dict.values() if v is not None]
-# MIN_SCORE = min(valid_scores)
-# MAX_SCORE = max(valid_scores)
-MIN_SCORE = 0
-MAX_SCORE = .1
+
 
 stopword_df_path = os.path.join(OUTPUT_PATH, "topic_word_stopword.csv")
 
@@ -248,19 +443,6 @@ else:
     topic_word_stopword_df = pd.DataFrame(columns=['word', 'stopword', 'stopped', 'Replace'])
     print(f"Created new stopword data file at {stopword_df_path}")
 
-# def gray_color(word, font_size, position, orientation, random_state=None, **kw):
-#     """Return an rgb() string whose gray level comes from the key_score_dict."""
-#     score = key_score_dict.get(word, None)
-#     print("gray_color", word, score)
-#     if score is None:
-#         return f"rgb(230, 230, 230)"  # Medium gray for None values
-    
-#     # Normalize score to 0-1 range
-#     normalized_score = (score - MIN_SCORE) / (MAX_SCORE - MIN_SCORE)
-    
-#     # Convert to grayscale (0: black → 255: white)
-#     g = int(normalized_score * 255)
-#     return f"rgb({g}, {g}, {g})"
 
 def gray_color(word, font_size, position, orientation, random_state=None, **kw):
     """Return an rgb() string whose gray level comes from the key_score_dict."""
@@ -356,7 +538,7 @@ def gray_color(word, font_size, position, orientation, random_state=None, **kw):
             elif stopped_value is False:
                 return WORD_COLOR
 
-        print(f'Word {word} cleared')
+        # print(f'Word {word} cleared')
         global passed_words_list
         passed_words_list.append(word)
         return WORD_COLOR
@@ -385,12 +567,64 @@ def get_all_topics_words(lda_model):
 
 
 all_topics_words = get_all_topics_words(lda_model_tfidf)
-#process each csv
+
+# ---------- FIRST PASS: Collect all frequencies for global scaling ----------
+print("First pass: Collecting frequencies for global scaling...")
+all_freqs_dicts = []
+csv_data_list = []  # Store CSV processing data for second pass
+
 for csv in CSV_LIST:
     CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0]
-    print("Processing: " + CSV_NUMBER)
+    print("Processing (pass 1): " + CSV_NUMBER)
     this_topics_words = dict(all_topics_words[int(CSV_NUMBER)])
     df = pd.read_csv(INPUT_PATH+csv).dropna(subset=["description", "count"])
+    
+    # Build frequencies with replacements
+    freqs = build_freqs_with_replacements(df, topic_word_stopword_df)
+    
+    # Print frequency statistics for this CSV
+    if freqs:
+        counts = list(freqs.values())
+        print(f"  Topic {CSV_NUMBER} - Original frequencies: min={min(counts)}, max={max(counts)}, mean={np.mean(counts):.2f}, count={len(freqs)} words")
+        # Show top 5 words by frequency
+        top_words = sorted(freqs.items(), key=lambda x: x[1], reverse=True)[:5]
+        print(f"  Topic {CSV_NUMBER} - Top 5 words: {[(w, c) for w, c in top_words]}")
+    else:
+        print(f"  Topic {CSV_NUMBER} - WARNING: No frequencies found!")
+    
+    all_freqs_dicts.append(freqs)
+    
+    # Store data needed for second pass
+    csv_data_list.append({
+        'csv': csv,
+        'CSV_NUMBER': CSV_NUMBER,
+        'df': df,
+        'this_topics_words': this_topics_words,
+        'freqs': freqs
+    })
+
+# Compute global scale across all CSVs
+print("\n" + "="*60)
+scale_type_name = "logarithmic" if USE_LOG_SCALE else "linear"
+print(f"Computing global scale across all CSVs (using {scale_type_name} scaling)...")
+print("="*60)
+global_scale = compute_global_scale(all_freqs_dicts, use_log_scale=USE_LOG_SCALE)
+scale_label = "log" if global_scale.get('use_log', False) else "linear"
+print(f"\nGlobal scale summary ({scale_label}):")
+print(f"  Min: {global_scale['min']:.4f}")
+print(f"  Max: {global_scale['max']:.4f}")
+print(f"  Range: {global_scale['max'] - global_scale['min']:.4f}")
+print(f"  This scale will be used for all {len(all_freqs_dicts)} topics")
+print("="*60 + "\n")
+
+# ---------- SECOND PASS: Scale frequencies and create word clouds ----------
+print("Second pass: Scaling frequencies and creating word clouds...")
+for csv_data in csv_data_list:
+    CSV_NUMBER = csv_data['CSV_NUMBER']
+    print("Processing (pass 2): " + CSV_NUMBER)
+    this_topics_words = csv_data['this_topics_words']
+    df = csv_data['df']
+    freqs = csv_data['freqs']  # Use pre-computed freqs from first pass
 
     keyword_list = []
     remove_empty_list = []
@@ -452,61 +686,85 @@ for csv in CSV_LIST:
 
 
 
-    # Frequencies for WordCloud
-    #may need to check
-    freqs  = dict(zip(df["description"], df["count"]))
+    # Scale frequencies using global scale
+    print(f"  Topic {CSV_NUMBER} - Scaling frequencies...")
+    print(f"  Topic {CSV_NUMBER} - Original frequencies: {len(freqs)} words")
+    if freqs:
+        orig_counts = list(freqs.values())
+        print(f"  Topic {CSV_NUMBER} - Original stats: min={min(orig_counts)}, max={max(orig_counts)}, mean={np.mean(orig_counts):.2f}")
     
-    # Preprocess: Replace words based on "Replace" column in topic_word_stopword_df
-    # If "stopped" is empty and "Replace" has a value, replace the word
-    if 'Replace' in topic_word_stopword_df.columns:
-        words_to_replace = {}
-        for idx, row in topic_word_stopword_df.iterrows():
-            word = row['word']
-            stopped_value = row.get('stopped', None)
-            replace_value = row.get('Replace', '')
-            
-            # Check if stopped is empty (None, NaN, empty string) and Replace has a value
-            if (pd.isna(stopped_value) or stopped_value == '' or stopped_value is None) and \
-               pd.notna(replace_value) and replace_value != '':
-                # If word exists in freqs, mark it for replacement
-                if word in freqs:
-                    words_to_replace[word] = replace_value
+    # Calculate global proportion for this topic's max frequency
+    # This tells us where this topic's max falls in the global scale
+    if freqs:
+        local_max = max(freqs.values())
+        min_val = global_scale['min']
+        max_val = global_scale['max']
+        use_log = global_scale.get('use_log', False)
         
-        # Perform replacements and merge counts if replace value already exists
-        for old_word, new_word in words_to_replace.items():
-            if old_word in freqs:
-                count = freqs.pop(old_word)
-                # If new_word already exists, add the counts together
-                if new_word in freqs:
-                    freqs[new_word] += count
-                else:
-                    freqs[new_word] = count
-                print(f"Replaced '{old_word}' with '{new_word}' (count: {count})")
+        if use_log:
+            local_max_transformed = np.log1p(local_max)
+        else:
+            local_max_transformed = local_max
+        
+        scale_range = max_val - min_val
+        if scale_range > 0:
+            global_proportion = (local_max_transformed - min_val) / scale_range
+            global_proportion = max(0.0, min(1.0, global_proportion))
+        else:
+            global_proportion = 1.0
+        
+        # Calculate max_font_size based on global proportion
+        # Topic with global max (1.0) gets FONT_MAX, others scale proportionally
+        topic_max_font_size = int(FONT_MIN + global_proportion * (FONT_MAX - FONT_MIN))
+        print(f"  Topic {CSV_NUMBER} - Max frequency: {local_max}, Global proportion: {global_proportion:.4f}, Max font size: {topic_max_font_size}")
+    else:
+        topic_max_font_size = FONT_MAX
+        global_proportion = 1.0
+        print(f"  Topic {CSV_NUMBER} - WARNING: No frequencies, using default max font size")
+    
+    # Store original freqs for reference
+    original_freqs = freqs.copy()
+    
+    # Use original frequencies (not pre-scaled) - WordCloud will normalize internally
+    # The max_font_size setting will ensure proper global scaling
+    wordcloud_freqs = freqs
+    
+    # Print comparison
+    if wordcloud_freqs:
+        freq_vals = list(wordcloud_freqs.values())
+        print(f"  Topic {CSV_NUMBER} - Frequency stats: min={min(freq_vals)}, max={max(freq_vals)}, mean={np.mean(freq_vals):.2f}")
+        # Show top 5 words
+        top_words = sorted(wordcloud_freqs.items(), key=lambda x: x[1], reverse=True)[:5]
+        print(f"  Topic {CSV_NUMBER} - Top 5 words: {[(w, c) for w, c in top_words]}")
     
     # print("freqs", freqs)
    #relations = dict(zip(df['description'], map_values_to_range(sorted_topics)))
     relations = dict(zip(df['description'], sorted_topics))
 
     # ---------- 3) BUILD WORD CLOUD ---------------------------------------------
+    print(f"  Topic {CSV_NUMBER} - Generating word cloud with {len(wordcloud_freqs)} words (max font: {topic_max_font_size})...")
     wc = (
         WordCloud(width=WC_WIDTH,
                 height=WC_HEIGHT,
                 background_color=BACKGROUND,
                 prefer_horizontal=1.0,
                 min_font_size=FONT_MIN,
+                max_font_size=topic_max_font_size,  # Set max font size based on global proportion
                 color_func=gray_color, ##Interpret as colormap rather than single color, use LLM to process in between steps
                 font_path=FONT_FILE)
-        .generate_from_frequencies(freqs)
+        .generate_from_frequencies(wordcloud_freqs)
     )
 
     # Save to a temp PNG
     tmp_png = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-
     wc.to_file(tmp_png.name)
+    print(f"  Topic {CSV_NUMBER} - Word cloud generated and saved to {tmp_png.name}")
 
     # Store the word cloud data for later PDF creation
     PDF_DATA[CSV_NUMBER] = {
-        'freqs': freqs,
+        'freqs': original_freqs,  # Store original frequencies
+        'max_font_size': topic_max_font_size,  # Store the max font size used
+        'global_proportion': global_proportion,  # Store the global proportion
         'relations': relations,
         'tmp_png': tmp_png.name,
         'wc': wc,
