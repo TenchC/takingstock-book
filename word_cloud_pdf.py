@@ -71,25 +71,30 @@ print("NUM_ROWS is", NUM_ROWS)
 MANUAL_PICK = False
 print(f"MANUAL PICK IS {MANUAL_PICK}")
 
-PINK_COLOR = "rgb(241, 194, 192)"
+
+# PURPLE_COLOR = "rgb(139, 131, 187)"
 # GREEN_COLOR = "rgb(192, 241, 194)"
 # BLUE_COLOR = "rgb(192, 194, 241)"
-CYAN_COLOR = "rgb(114, 195, 220)"
-PURPLE_COLOR = "rgb(139, 131, 187)"
-YELLOW_COLOR = "rgb(245, 193, 88)"
+PINK_COLOR = "rgb(225, 181, 190)"
+CYAN_COLOR = "rgb(109, 177, 212)"
+LIGHT_CYAN_COLOR =  "rgb(148, 194, 219)"
+RED_COLOR = "rgb(176, 58, 54)"
+MAGENTA_COLOR = "rgb(200, 95, 125)"
+YELLOW_COLOR = "rgb(240, 207, 99)"
 BLACK_COLOR = "rgb(0,0,0)"
 GRAY_COLOR = "rgb(200,200,200)"
+WHITE_COLOR = "rgb(255,255,255)"
 
-STOPWORD_COLOR = GRAY_COLOR
-WORD_COLOR = PURPLE_COLOR
 
 
 
 # Word-cloud cosmetics
-FONT_MIN = 4         # adjust to taste
+FONT_MIN = 10         # adjust to taste
 FONT_MAX = 600        # Maximum font size - will be scaled per topic based on global proportions
 WC_WIDTH, WC_HEIGHT = 3200, 4800    # px; higher = sharper
-BACKGROUND = "white"
+STOPWORD_COLOR = LIGHT_CYAN_COLOR
+WORD_COLOR = CYAN_COLOR
+BACKGROUND_COLOR = WHITE_COLOR
 
 # Scaling configuration
 USE_LOG_SCALE = False  # Set to True for logarithmic scaling, False for linear scaling
@@ -715,8 +720,23 @@ for csv_data in csv_data_list:
         
         # Calculate max_font_size based on global proportion
         # Topic with global max (1.0) gets FONT_MAX, others scale proportionally
+        # Formula ensures: min_proportion (0.0) → FONT_MIN, max_proportion (1.0) → FONT_MAX
         topic_max_font_size = int(FONT_MIN + global_proportion * (FONT_MAX - FONT_MIN))
-        print(f"  Topic {CSV_NUMBER} - Max frequency: {local_max}, Global proportion: {global_proportion:.4f}, Max font size: {topic_max_font_size}")
+        
+        # Explicitly clamp to ensure it never goes below FONT_MIN (safety check)
+        topic_max_font_size = max(FONT_MIN, topic_max_font_size)
+        
+        # Ensure max_font_size is always greater than min_font_size
+        # If they're equal, WordCloud will have no size variation
+        if topic_max_font_size <= FONT_MIN:
+            topic_max_font_size = FONT_MIN + 1
+            print(f"  Topic {CSV_NUMBER} - WARNING: Adjusted max font size to {topic_max_font_size} (was <= FONT_MIN)")
+        
+        # Warn if max_font_size is very close to FONT_MIN (might indicate scaling issues)
+        if topic_max_font_size <= FONT_MIN + 5:
+            print(f"  Topic {CSV_NUMBER} - WARNING: Max font size ({topic_max_font_size}) is very close to minimum ({FONT_MIN}) - words will appear very small")
+        
+        print(f"  Topic {CSV_NUMBER} - Max frequency: {local_max}, Global proportion: {global_proportion:.4f}, Max font size: {topic_max_font_size} (min: {FONT_MIN}, max: {FONT_MAX})")
     else:
         topic_max_font_size = FONT_MAX
         global_proportion = 1.0
@@ -746,7 +766,7 @@ for csv_data in csv_data_list:
     wc = (
         WordCloud(width=WC_WIDTH,
                 height=WC_HEIGHT,
-                background_color=BACKGROUND,
+                background_color=BACKGROUND_COLOR,
                 prefer_horizontal=1.0,
                 min_font_size=FONT_MIN,
                 max_font_size=topic_max_font_size,  # Set max font size based on global proportion
