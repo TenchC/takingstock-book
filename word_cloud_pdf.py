@@ -33,8 +33,7 @@ OUTPUT_PATH = os.path.join(GLOBAL_PATH, 'outputs/word_cloud/')
 # print(f"Paths: Input: {INPUT_PATH}, Model: {MODEL_PATH}, Stopwords: {STOPWORD_PATH}, Output: {OUTPUT_PATH}")
 
 PDF_DATA = {}
-OUT_PDF     = os.path.join(OUTPUT_PATH, "wordcloud")  # final file
-FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-Regular.ttf") 
+
 FONT_NAME   = "CrimsonText"
 FOOTER_FONT_FILE = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-SemiBold.ttf")
 FOOTER_FONT_NAME = "CrimsonText-SemiBold"
@@ -59,7 +58,7 @@ passed_words_list = []
 SIDE = "left"
 
 #batch Processing
-BATCH_PROCESS = False
+BATCH_PROCESS = True
 PROCESS_SELECT = [11,38, 61]
 CSV_LIST = {}
 
@@ -89,16 +88,24 @@ WHITE_COLOR = "rgb(255,255,255)"
 
 
 # Word-cloud cosmetics
-FONT_MIN = 10         # adjust to taste
-FONT_MAX = 600        # Maximum font size - will be scaled per topic based on global proportions
+FONT_MIN = 15         # adjust to taste
+FONT_MAX = 1200        # Maximum font size - will be scaled per topic based on global proportions
 WC_WIDTH, WC_HEIGHT = 3200, 4800    # px; higher = sharper
-STOPWORD_COLOR = LIGHT_CYAN_COLOR
-WORD_COLOR = CYAN_COLOR
+STOPWORD_COLOR = PINK_COLOR
+WORD_COLOR = RED_COLOR
 BACKGROUND_COLOR = WHITE_COLOR
+
+OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FONT_{FONT_MIN}_{FONT_MAX}_WORD_{WORD_COLOR}_STOPWORD_{STOPWORD_COLOR}_BACKGROUND_{BACKGROUND_COLOR}")  # final file
+FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-Regular.ttf") 
 
 # Scaling configuration
 USE_LOG_SCALE = False  # Set to True for logarithmic scaling, False for linear scaling
-                       # Linear scaling preserves proportional relationships (e.g., 493762/16000000)      
+                       # Linear scaling preserves proportional relationships (e.g., 493762/16000000)
+
+# Mixed scaling: Use linear for top X topics, logarithmic for the rest
+USE_MIXED_SCALING = True  # Set to True to enable mixed scaling
+TOP_X_LINEAR = 30  # Number of top topics (by max frequency) to use linear scaling
+                   # Remaining topics will use logarithmic scaling      
 # -----------------------------------------------------------------------------
 def analyze_csv(input_csv, input_path, num_rows):
     df = pd.read_csv(input_path+input_csv)
@@ -599,28 +606,100 @@ for csv in CSV_LIST:
     
     all_freqs_dicts.append(freqs)
     
-    # Store data needed for second pass
+    # Store data needed for second pass (including max frequency for ranking)
+    max_freq = max(freqs.values()) if freqs else 0
     csv_data_list.append({
         'csv': csv,
         'CSV_NUMBER': CSV_NUMBER,
         'df': df,
         'this_topics_words': this_topics_words,
-        'freqs': freqs
+        'freqs': freqs,
+        'max_freq': max_freq  # Store max frequency for ranking
     })
 
-# Compute global scale across all CSVs
-print("\n" + "="*60)
-scale_type_name = "logarithmic" if USE_LOG_SCALE else "linear"
-print(f"Computing global scale across all CSVs (using {scale_type_name} scaling)...")
-print("="*60)
-global_scale = compute_global_scale(all_freqs_dicts, use_log_scale=USE_LOG_SCALE)
-scale_label = "log" if global_scale.get('use_log', False) else "linear"
-print(f"\nGlobal scale summary ({scale_label}):")
-print(f"  Min: {global_scale['min']:.4f}")
-print(f"  Max: {global_scale['max']:.4f}")
-print(f"  Range: {global_scale['max'] - global_scale['min']:.4f}")
-print(f"  This scale will be used for all {len(all_freqs_dicts)} topics")
-print("="*60 + "\n")
+# Determine topic rankings and which scale to use (if mixed scaling is enabled)
+if USE_MIXED_SCALING:
+    # Sort topics by max frequency (descending)
+    csv_data_list.sort(key=lambda x: x['max_freq'], reverse=True)
+    
+    # Assign scale type to each topic
+    linear_topics = []
+    log_topics = []
+    for i, csv_data in enumerate(csv_data_list):
+        if i < TOP_X_LINEAR:
+            csv_data['use_log_scale'] = False
+            csv_data['scale_rank'] = i + 1
+            linear_topics.append(csv_data['CSV_NUMBER'])
+        else:
+            csv_data['use_log_scale'] = True
+            csv_data['scale_rank'] = i + 1
+            log_topics.append(csv_data['CSV_NUMBER'])
+    
+    print("\n" + "="*60)
+    print(f"Mixed scaling enabled: Top {TOP_X_LINEAR} topics will use LINEAR scaling")
+    print(f"Remaining {len(csv_data_list) - TOP_X_LINEAR} topics will use LOGARITHMIC scaling")
+    print(f"\nLINEAR scaling topics (top {TOP_X_LINEAR}): {', '.join(linear_topics)}")
+    print(f"LOGARITHMIC scaling topics: {', '.join(log_topics)}")
+    print("="*60)
+    
+    # Separate frequencies by scale type
+    linear_freqs_dicts = [csv_data['freqs'] for csv_data in csv_data_list if not csv_data['use_log_scale']]
+    log_freqs_dicts = [csv_data['freqs'] for csv_data in csv_data_list if csv_data['use_log_scale']]
+    
+    # Compute LINEAR scale from only linear topics
+    print("\nComputing LINEAR global scale (from linear topics only)...")
+    global_scale_linear = compute_global_scale(linear_freqs_dicts, use_log_scale=False)
+    
+    # Compute LOGARITHMIC scale from only log topics
+    print("\nComputing LOGARITHMIC global scale (from log topics only)...")
+    global_scale_log = compute_global_scale(log_freqs_dicts, use_log_scale=True)
+    
+    # Find the minimum proportion in the linear scale (smallest linear topic's proportion)
+    # This will be where the log scale starts
+    linear_min_proportion = 1.0  # Start with max, find the actual min
+    if linear_freqs_dicts:
+        linear_min_freq = min([max(freqs.values()) for freqs in linear_freqs_dicts if freqs])
+        min_val = global_scale_linear['min']
+        max_val = global_scale_linear['max']
+        scale_range = max_val - min_val
+        if scale_range > 0:
+            linear_min_proportion = (linear_min_freq - min_val) / scale_range
+            linear_min_proportion = max(0.0, min(1.0, linear_min_proportion))
+    
+    print("\n" + "="*60)
+    print("Global scale summary:")
+    print(f"  Linear scale (from {len(linear_freqs_dicts)} topics): min={global_scale_linear['min']:.4f}, max={global_scale_linear['max']:.4f}")
+    print(f"  Log scale (from {len(log_freqs_dicts)} topics): min={global_scale_log['min']:.4f}, max={global_scale_log['max']:.4f}")
+    print(f"  Linear minimum proportion: {linear_min_proportion:.4f}")
+    print(f"  Log scale will map from 0.0 to {linear_min_proportion:.4f} (log topics will be smaller than linear topics)")
+    print("="*60 + "\n")
+    
+    # Store both scales and the transition point for use in second pass
+    global_scales = {
+        'linear': global_scale_linear,
+        'log': global_scale_log,
+        'linear_min_proportion': linear_min_proportion  # Where log scale starts
+    }
+else:
+    # Single scale mode (original behavior)
+    print("\n" + "="*60)
+    scale_type_name = "logarithmic" if USE_LOG_SCALE else "linear"
+    print(f"Computing global scale across all CSVs (using {scale_type_name} scaling)...")
+    print("="*60)
+    global_scale = compute_global_scale(all_freqs_dicts, use_log_scale=USE_LOG_SCALE)
+    scale_label = "log" if global_scale.get('use_log', False) else "linear"
+    print(f"\nGlobal scale summary ({scale_label}):")
+    print(f"  Min: {global_scale['min']:.4f}")
+    print(f"  Max: {global_scale['max']:.4f}")
+    print(f"  Range: {global_scale['max'] - global_scale['min']:.4f}")
+    print(f"  This scale will be used for all {len(all_freqs_dicts)} topics")
+    print("="*60 + "\n")
+    
+    # Store single scale for use in second pass
+    global_scales = {'single': global_scale}  # Store as dict for consistency
+    for csv_data in csv_data_list:
+        csv_data['use_log_scale'] = USE_LOG_SCALE
+        csv_data['scale_rank'] = None
 
 # ---------- SECOND PASS: Scale frequencies and create word clouds ----------
 print("Second pass: Scaling frequencies and creating word clouds...")
@@ -698,13 +777,25 @@ for csv_data in csv_data_list:
         orig_counts = list(freqs.values())
         print(f"  Topic {CSV_NUMBER} - Original stats: min={min(orig_counts)}, max={max(orig_counts)}, mean={np.mean(orig_counts):.2f}")
     
+    # Select the appropriate global scale based on mixed scaling settings
+    if USE_MIXED_SCALING:
+        use_log = csv_data['use_log_scale']
+        scale_rank = csv_data.get('scale_rank', None)
+        scale_type_name = "LOGARITHMIC" if use_log else "LINEAR"
+        if scale_rank:
+            print(f"  Topic {CSV_NUMBER} - Rank: {scale_rank}, Using {scale_type_name} scaling")
+        global_scale = global_scales['log'] if use_log else global_scales['linear']
+    else:
+        # Single scale mode - use the precomputed global scale
+        use_log = csv_data['use_log_scale']
+        global_scale = global_scales['single']
+    
     # Calculate global proportion for this topic's max frequency
     # This tells us where this topic's max falls in the global scale
     if freqs:
         local_max = max(freqs.values())
         min_val = global_scale['min']
         max_val = global_scale['max']
-        use_log = global_scale.get('use_log', False)
         
         if use_log:
             local_max_transformed = np.log1p(local_max)
@@ -712,11 +803,28 @@ for csv_data in csv_data_list:
             local_max_transformed = local_max
         
         scale_range = max_val - min_val
+        scale_proportion = 0.0  # Initialize for logging
         if scale_range > 0:
-            global_proportion = (local_max_transformed - min_val) / scale_range
-            global_proportion = max(0.0, min(1.0, global_proportion))
+            # Calculate proportion within this topic's scale (0.0 to 1.0)
+            scale_proportion = (local_max_transformed - min_val) / scale_range
+            scale_proportion = max(0.0, min(1.0, scale_proportion))
+            
+            # For mixed scaling with log topics, map to global proportion
+            if USE_MIXED_SCALING and use_log:
+                # Map log scale proportion [0, 1] to global proportion [0.0, linear_min_proportion]
+                # This ensures log topics are smaller than linear topics
+                linear_min_prop = global_scales.get('linear_min_proportion', 0.0005)
+                global_proportion = scale_proportion * linear_min_prop
+            else:
+                # Linear topics or single scale mode: use proportion directly
+                global_proportion = scale_proportion
         else:
-            global_proportion = 1.0
+            scale_proportion = 1.0
+            if USE_MIXED_SCALING and use_log:
+                linear_min_prop = global_scales.get('linear_min_proportion', 0.0005)
+                global_proportion = linear_min_prop  # Max log topic gets linear_min_prop
+            else:
+                global_proportion = 1.0
         
         # Calculate max_font_size based on global proportion
         # Topic with global max (1.0) gets FONT_MAX, others scale proportionally
@@ -736,7 +844,13 @@ for csv_data in csv_data_list:
         if topic_max_font_size <= FONT_MIN + 5:
             print(f"  Topic {CSV_NUMBER} - WARNING: Max font size ({topic_max_font_size}) is very close to minimum ({FONT_MIN}) - words will appear very small")
         
-        print(f"  Topic {CSV_NUMBER} - Max frequency: {local_max}, Global proportion: {global_proportion:.4f}, Max font size: {topic_max_font_size} (min: {FONT_MIN}, max: {FONT_MAX})")
+        scale_type_display = "LOG" if use_log else "LINEAR"
+        if USE_MIXED_SCALING and use_log and scale_range > 0:
+            # Show both scale proportion and mapped global proportion for log topics
+            linear_min_prop = global_scales.get('linear_min_proportion', 0.0)
+            print(f"  Topic {CSV_NUMBER} - Max frequency: {local_max}, Scale: {scale_type_display}, Scale proportion: {scale_proportion:.4f} (mapped from log scale), Global proportion: {global_proportion:.4f} (mapped to [0.0, {linear_min_prop:.4f}]), Max font size: {topic_max_font_size} (min: {FONT_MIN}, max: {FONT_MAX})")
+        else:
+            print(f"  Topic {CSV_NUMBER} - Max frequency: {local_max}, Scale: {scale_type_display}, Global proportion: {global_proportion:.4f}, Max font size: {topic_max_font_size} (min: {FONT_MIN}, max: {FONT_MAX})")
     else:
         topic_max_font_size = FONT_MAX
         global_proportion = 1.0
