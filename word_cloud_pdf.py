@@ -29,6 +29,7 @@ INPUT_PATH  = os.path.join(GLOBAL_PATH, "input_csvs/word_cloud/")
 MODEL_PATH =  os.path.join(GLOBAL_PATH, "model/")
 STOPWORD_PATH = os.path.join(TAKINGSTOCK_PATH, "model_files/")
 OUTPUT_PATH = os.path.join(GLOBAL_PATH, 'outputs/word_cloud/')
+PASSED_WORDS_POS_FILE = os.path.join(GLOBAL_PATH, "passed_words_pos.csv")
 
 # print(f"Paths: Input: {INPUT_PATH}, Model: {MODEL_PATH}, Stopwords: {STOPWORD_PATH}, Output: {OUTPUT_PATH}")
 
@@ -55,6 +56,9 @@ _word_color_cache = {}
 # List to track words that pass/clear
 passed_words_list = []
 
+# List to track words without POS tags (trigger POS_COLOR_OTHER)
+words_without_pos_list = []
+
 SIDE = "left"
 
 #batch Processing
@@ -71,7 +75,7 @@ MANUAL_PICK = False
 print(f"MANUAL PICK IS {MANUAL_PICK}")
 
 
-# PURPLE_COLOR = "rgb(139, 131, 187)"
+PURPLE_COLOR = "rgb(139, 131, 187)"
 # GREEN_COLOR = "rgb(192, 241, 194)"
 # BLUE_COLOR = "rgb(192, 194, 241)"
 PINK_COLOR = "rgb(225, 181, 190)"
@@ -89,23 +93,29 @@ WHITE_COLOR = "rgb(255,255,255)"
 
 # Word-cloud cosmetics
 FONT_MIN = 15         # adjust to taste
-FONT_MAX = 1200        # Maximum font size - will be scaled per topic based on global proportions
+FONT_MAX = 900        # Maximum font size - will be scaled per topic based on global proportions
 WC_WIDTH, WC_HEIGHT = 3200, 4800    # px; higher = sharper
-STOPWORD_COLOR = PINK_COLOR
-WORD_COLOR = RED_COLOR
+STOPWORD_COLOR = GRAY_COLOR
+WORD_COLOR = YELLOW_COLOR
 BACKGROUND_COLOR = WHITE_COLOR
+
+POS_COLOR_NOUN = YELLOW_COLOR
+POS_COLOR_ADJECTIVE = MAGENTA_COLOR
+POS_COLOR_VERB = CYAN_COLOR
+POS_COLOR_OTHER = PURPLE_COLOR
 
 OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FONT_{FONT_MIN}_{FONT_MAX}_WORD_{WORD_COLOR}_STOPWORD_{STOPWORD_COLOR}_BACKGROUND_{BACKGROUND_COLOR}")  # final file
 FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-Regular.ttf") 
 
 # Scaling configuration
-USE_LOG_SCALE = False  # Set to True for logarithmic scaling, False for linear scaling
-                       # Linear scaling preserves proportional relationships (e.g., 493762/16000000)
-
-# Mixed scaling: Use linear for top X topics, logarithmic for the rest
-USE_MIXED_SCALING = True  # Set to True to enable mixed scaling
-TOP_X_LINEAR = 30  # Number of top topics (by max frequency) to use linear scaling
-                   # Remaining topics will use logarithmic scaling      
+SCALE_BUCKETS = [
+    {"name": "bucket1", "topic_count": 10,  "output_min": 0.90, "output_max": 1.00},
+    {"name": "bucket2", "topic_count": 10, "output_min": 0.70, "output_max": 0.90},
+    {"name": "bucket3", "topic_count": 11, "output_min": 0.50, "output_max": 0.70},
+    {"name": "bucket4", "topic_count": 11, "output_min": 0.30, "output_max": 0.50},
+    {"name": "bucket5", "topic_count": 11, "output_min": 0.15, "output_max": 0.30},
+    {"name": "bucket6", "topic_count": 9999, "output_min": 0.09, "output_max": 0.15},  # overflow bucket
+]
 # -----------------------------------------------------------------------------
 def analyze_csv(input_csv, input_path, num_rows):
     df = pd.read_csv(input_path+input_csv)
@@ -113,6 +123,40 @@ def analyze_csv(input_csv, input_path, num_rows):
     if CUTOFF:
         df = df.head(num_rows)
     return input_csv, df,
+
+
+def load_pos_lookup(csv_path):
+    """
+    Load a word -> POS mapping from the passed_words_pos.csv file.
+    """
+    if not os.path.exists(csv_path):
+        print(f"WARNING: POS tag file not found at {csv_path}. Default colors will be used.")
+        return {}
+    
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as exc:
+        print(f"WARNING: Unable to read POS tag file '{csv_path}': {exc}")
+        return {}
+    
+    if 'word' not in df.columns or 'POS' not in df.columns:
+        print(f"WARNING: POS tag file '{csv_path}' is missing required columns 'word' and/or 'POS'.")
+        return {}
+    
+    df = df.dropna(subset=['word', 'POS'])
+    df['word'] = df['word'].astype(str).str.strip()
+    df['POS'] = df['POS'].astype(str).str.strip()
+    
+    lookup = {}
+    for _, row in df.iterrows():
+        key = row['word'].lower()
+        if key:
+            lookup[key] = row['POS']
+    print(f"Loaded {len(lookup)} POS entries from {csv_path}")
+    return lookup
+
+
+PASSED_WORDS_POS_LOOKUP = load_pos_lookup(PASSED_WORDS_POS_FILE)
 
 
 def build_freqs_with_replacements(df, topic_word_stopword_df):
@@ -211,122 +255,45 @@ def compute_global_scale(all_freqs_dicts, use_log_scale=False):
         return {'min': min_val, 'max': max_val, 'use_log': False}
 
 
-def scale_freqs(freqs, global_scale, csv_number=None, verbose=False):
-    """
-    Scale frequency dictionary using global min/max to ensure consistent sizing across CSVs.
-    
-    WordCloud normalizes frequencies internally, so we scale to preserve global proportions
-    while ensuring each cloud uses the full font size range.
-    
-    Args:
-        freqs: Dictionary mapping words to counts
-        global_scale: Dictionary with 'min', 'max', and 'use_log' from compute_global_scale
-        csv_number: Optional CSV number for logging
-        verbose: If True, print detailed scaling information
-    
-    Returns:
-        Scaled frequency dictionary that preserves global proportions
-    """
-    scaled_freqs = {}
-    min_val = global_scale['min']
-    max_val = global_scale['max']
-    use_log = global_scale.get('use_log', False)
-    scale_range = max_val - min_val
-    
-    # Handle edge case where range is zero
-    if scale_range == 0:
-        print(f"  WARNING: Scale range is zero! Using fallback range.")
-        scale_range = 1.0
-    
-    # Find the local min/max for this topic
-    local_values = [count for count in freqs.values() if count > 0]
-    if not local_values:
-        # All frequencies are 0 or invalid
-        return {word: 1.0 for word in freqs.keys()}
-    
-    local_min = min(local_values)
-    local_max = max(local_values)
-    
-    scale_type = "log" if use_log else "linear"
-    if verbose:
-        print(f"  Scaling frequencies ({scale_type}) - global: [{min_val:.4f}, {max_val:.4f}], local: [{local_min}, {local_max}]")
-    
-    # Transform local min/max to global scale
-    if use_log:
-        local_min_transformed = np.log1p(local_min)
-        local_max_transformed = np.log1p(local_max)
-    else:
-        local_min_transformed = local_min
-        local_max_transformed = local_max
-    
-    # Calculate where this topic's max maps to in global scale (0 to 1)
-    local_max_normalized = (local_max_transformed - min_val) / scale_range
-    local_max_normalized = max(0.0, min(1.0, local_max_normalized))
-    
-    # Scale frequencies so that:
-    # - This topic's max word maps to local_max_normalized (preserving global proportion)
-    # - This topic's min word maps to 0 (or a small value)
-    # - WordCloud will normalize these internally, but the relative proportions are preserved
-    local_range = local_max_transformed - local_min_transformed
-    if local_range == 0:
-        local_range = 1.0  # Avoid division by zero
-    
-    example_transformations = []
-    for word, count in freqs.items():
-        if count > 0:
-            if use_log:
-                transformed = np.log1p(count)
-            else:
-                transformed = count
-            
-            # Normalize within local range (0 to 1 for this topic)
-            local_normalized = (transformed - local_min_transformed) / local_range
-            local_normalized = max(0.0, min(1.0, local_normalized))
-            
-            # Scale to global proportion: map local normalized to global normalized range
-            # The max word in this topic should map to local_max_normalized
-            # The min word should map to a value proportional to global min
-            global_min_normalized = (local_min_transformed - min_val) / scale_range
-            global_min_normalized = max(0.0, min(1.0, global_min_normalized))
-            
-            # Map local normalized [0, 1] to global normalized [global_min_normalized, local_max_normalized]
-            global_normalized = global_min_normalized + local_normalized * (local_max_normalized - global_min_normalized)
-            
-            # Use the global normalized value directly (WordCloud will normalize internally)
-            # But multiply by a large number to ensure WordCloud uses the full range
-            # This preserves the global proportions
-            scaled_val = global_normalized * 1000.0  # Large multiplier to preserve precision
-            scaled_freqs[word] = scaled_val
-            
-            # Collect examples for logging
-            if verbose and len(example_transformations) < 5:
-                if use_log:
-                    example_transformations.append((word, count, transformed, local_normalized, global_normalized, scaled_val))
-                else:
-                    example_transformations.append((word, count, None, local_normalized, global_normalized, scaled_val))
-        else:
-            scaled_freqs[word] = 1.0  # Minimum weight for zero counts
-    
-    if verbose and example_transformations:
-        if use_log:
-            print(f"  Example transformations (word, original, log, local_norm, global_norm, scaled):")
-            for word, orig, trans, local_norm, global_norm, scaled in example_transformations:
-                print(f"    '{word}': {orig} -> log={trans:.4f} -> local_norm={local_norm:.4f} -> global_norm={global_norm:.4f} -> scaled={scaled:.2f}")
-        else:
-            print(f"  Example transformations (word, original, local_norm, global_norm, scaled):")
-            for word, orig, trans, local_norm, global_norm, scaled in example_transformations:
-                print(f"    '{word}': {orig} -> local_norm={local_norm:.4f} -> global_norm={global_norm:.4f} -> scaled={scaled:.2f}")
-    
-    if scaled_freqs:
-        scaled_values = list(scaled_freqs.values())
-        if verbose:
-            print(f"  Scaled values - min={min(scaled_values):.2f}, max={max(scaled_values):.2f}, mean={np.mean(scaled_values):.2f}")
-            print(f"  Global proportion: this topic's max maps to {local_max_normalized:.4f} of global max")
-    
-    # Return both scaled frequencies and the max proportion for setting max_font_size
-    return scaled_freqs, local_max_normalized 
+def _clamp(value, min_value=0.0, max_value=1.0):
+    """Clamp a numeric value into [min_value, max_value]."""
+    return max(min_value, min(max_value, value))
 
 
+def get_pos_color(word):
+    """
+    Return a color based on the POS tag for the supplied word.
+    Falls back to WORD_COLOR if no POS info is available.
+    """
+    global words_without_pos_list
+    
+    if not word:
+        return POS_COLOR_OTHER
+    
+    lookup = PASSED_WORDS_POS_LOOKUP
+    if not lookup:
+        return POS_COLOR_OTHER 
+    
+    key = str(word).lower()
+    pos_value = lookup.get(key)
+    if not pos_value:
+        print(f"WARNING: No POS tag found for word '{word}'. Defaulting to other color.")
+        if word not in words_without_pos_list:
+            words_without_pos_list.append(word)
+        return POS_COLOR_OTHER 
+    
+    pos_value = pos_value.upper()
+    if pos_value.startswith("NN"):
+        return POS_COLOR_NOUN
+    if pos_value.startswith("JJ"):
+        return POS_COLOR_ADJECTIVE
+    if pos_value.startswith("VB"):
+        return POS_COLOR_VERB
+    print(f"WARNING: No valid POS tag found for word '{word}'. Defaulting to other color.")
+    if word not in words_without_pos_list:
+        words_without_pos_list.append(word)
+    return POS_COLOR_OTHER 
+    
 def get_document_topic_weights_simple(model, bow_vector, topic_id):
     # this seems deprecated
     if not bow_vector:
@@ -458,7 +425,8 @@ else:
 
 def gray_color(word, font_size, position, orientation, random_state=None, **kw):
     """Return an rgb() string whose gray level comes from the key_score_dict."""
-    global _word_color_cache 
+    global _word_color_cache
+    global passed_words_list
     if MANUAL_PICK:
         # Check cache first to avoid repeated prompts for the same word
         if word in _word_color_cache:
@@ -548,12 +516,12 @@ def gray_color(word, font_size, position, orientation, random_state=None, **kw):
             if stopped_value is True:
                 return STOPWORD_COLOR
             elif stopped_value is False:
-                return WORD_COLOR
+                passed_words_list.append(word)
+                return get_pos_color(word)
 
         # print(f'Word {word} cleared')
-        global passed_words_list
         passed_words_list.append(word)
-        return WORD_COLOR
+        return get_pos_color(word)
             
 
 
@@ -617,89 +585,91 @@ for csv in CSV_LIST:
         'max_freq': max_freq  # Store max frequency for ranking
     })
 
-# Determine topic rankings and which scale to use (if mixed scaling is enabled)
-if USE_MIXED_SCALING:
-    # Sort topics by max frequency (descending)
-    csv_data_list.sort(key=lambda x: x['max_freq'], reverse=True)
-    
-    # Assign scale type to each topic
-    linear_topics = []
-    log_topics = []
-    for i, csv_data in enumerate(csv_data_list):
-        if i < TOP_X_LINEAR:
-            csv_data['use_log_scale'] = False
-            csv_data['scale_rank'] = i + 1
-            linear_topics.append(csv_data['CSV_NUMBER'])
+# Compute a single global linear scale across all topics
+print("\n" + "="*60)
+print("Computing global linear scale across all CSVs...")
+print("="*60)
+global_scale = compute_global_scale(all_freqs_dicts, use_log_scale=False)
+print(f"\nGlobal scale summary (linear):")
+print(f"  Min: {global_scale['min']:.4f}")
+print(f"  Max: {global_scale['max']:.4f}")
+print(f"  Range: {global_scale['max'] - global_scale['min']:.4f}")
+print(f"  This scale will be used for all {len(all_freqs_dicts)} topics")
+print("="*60 + "\n")
+
+# Assign topics to the configured buckets (highest frequency first)
+csv_data_list.sort(key=lambda x: x['max_freq'], reverse=True)
+bucket_summaries = []
+topic_index = 0
+total_topics = len(csv_data_list)
+
+for bucket in SCALE_BUCKETS:
+    bucket_count = bucket.get('topic_count', 0)
+    if bucket_count <= 0:
+        continue
+
+    bucket_topics = csv_data_list[topic_index: topic_index + bucket_count]
+    if not bucket_topics:
+        break
+
+    actual_count = len(bucket_topics)
+    assigned_ids = []
+    for idx, csv_topic in enumerate(bucket_topics):
+        if actual_count == 1:
+            position = 0.0  # Single topic gets max value (output_max)
         else:
-            csv_data['use_log_scale'] = True
-            csv_data['scale_rank'] = i + 1
-            log_topics.append(csv_data['CSV_NUMBER'])
-    
-    print("\n" + "="*60)
-    print(f"Mixed scaling enabled: Top {TOP_X_LINEAR} topics will use LINEAR scaling")
-    print(f"Remaining {len(csv_data_list) - TOP_X_LINEAR} topics will use LOGARITHMIC scaling")
-    print(f"\nLINEAR scaling topics (top {TOP_X_LINEAR}): {', '.join(linear_topics)}")
-    print(f"LOGARITHMIC scaling topics: {', '.join(log_topics)}")
-    print("="*60)
-    
-    # Separate frequencies by scale type
-    linear_freqs_dicts = [csv_data['freqs'] for csv_data in csv_data_list if not csv_data['use_log_scale']]
-    log_freqs_dicts = [csv_data['freqs'] for csv_data in csv_data_list if csv_data['use_log_scale']]
-    
-    # Compute LINEAR scale from only linear topics
-    print("\nComputing LINEAR global scale (from linear topics only)...")
-    global_scale_linear = compute_global_scale(linear_freqs_dicts, use_log_scale=False)
-    
-    # Compute LOGARITHMIC scale from only log topics
-    print("\nComputing LOGARITHMIC global scale (from log topics only)...")
-    global_scale_log = compute_global_scale(log_freqs_dicts, use_log_scale=True)
-    
-    # Find the minimum proportion in the linear scale (smallest linear topic's proportion)
-    # This will be where the log scale starts
-    linear_min_proportion = 1.0  # Start with max, find the actual min
-    if linear_freqs_dicts:
-        linear_min_freq = min([max(freqs.values()) for freqs in linear_freqs_dicts if freqs])
-        min_val = global_scale_linear['min']
-        max_val = global_scale_linear['max']
-        scale_range = max_val - min_val
-        if scale_range > 0:
-            linear_min_proportion = (linear_min_freq - min_val) / scale_range
-            linear_min_proportion = max(0.0, min(1.0, linear_min_proportion))
-    
-    print("\n" + "="*60)
-    print("Global scale summary:")
-    print(f"  Linear scale (from {len(linear_freqs_dicts)} topics): min={global_scale_linear['min']:.4f}, max={global_scale_linear['max']:.4f}")
-    print(f"  Log scale (from {len(log_freqs_dicts)} topics): min={global_scale_log['min']:.4f}, max={global_scale_log['max']:.4f}")
-    print(f"  Linear minimum proportion: {linear_min_proportion:.4f}")
-    print(f"  Log scale will map from 0.0 to {linear_min_proportion:.4f} (log topics will be smaller than linear topics)")
-    print("="*60 + "\n")
-    
-    # Store both scales and the transition point for use in second pass
-    global_scales = {
-        'linear': global_scale_linear,
-        'log': global_scale_log,
-        'linear_min_proportion': linear_min_proportion  # Where log scale starts
-    }
-else:
-    # Single scale mode (original behavior)
-    print("\n" + "="*60)
-    scale_type_name = "logarithmic" if USE_LOG_SCALE else "linear"
-    print(f"Computing global scale across all CSVs (using {scale_type_name} scaling)...")
-    print("="*60)
-    global_scale = compute_global_scale(all_freqs_dicts, use_log_scale=USE_LOG_SCALE)
-    scale_label = "log" if global_scale.get('use_log', False) else "linear"
-    print(f"\nGlobal scale summary ({scale_label}):")
-    print(f"  Min: {global_scale['min']:.4f}")
-    print(f"  Max: {global_scale['max']:.4f}")
-    print(f"  Range: {global_scale['max'] - global_scale['min']:.4f}")
-    print(f"  This scale will be used for all {len(all_freqs_dicts)} topics")
-    print("="*60 + "\n")
-    
-    # Store single scale for use in second pass
-    global_scales = {'single': global_scale}  # Store as dict for consistency
-    for csv_data in csv_data_list:
-        csv_data['use_log_scale'] = USE_LOG_SCALE
-        csv_data['scale_rank'] = None
+            position = idx / (actual_count - 1)
+
+        output_min = bucket['output_min']
+        output_max = bucket['output_max']
+        # Invert: position 0.0 (highest freq) → output_max, position 1.0 (lowest freq) → output_min
+        bucketed_proportion = output_max - position * (output_max - output_min)
+        bucketed_proportion = _clamp(bucketed_proportion)
+
+        csv_topic['bucket_name'] = bucket['name']
+        csv_topic['bucket_output_min'] = output_min
+        csv_topic['bucket_output_max'] = output_max
+        csv_topic['bucket_position'] = position
+        csv_topic['bucketed_proportion'] = bucketed_proportion
+
+        assigned_ids.append(csv_topic['CSV_NUMBER'])
+
+    bucket_summaries.append((bucket['name'], assigned_ids))
+    topic_index += actual_count
+
+if topic_index < total_topics:
+    fallback_bucket = SCALE_BUCKETS[-1] if SCALE_BUCKETS else {"name": "fallback", "output_min": 0.0, "output_max": 1.0}
+    bucket_topics = csv_data_list[topic_index:]
+    actual_count = len(bucket_topics)
+    assigned_ids = []
+    for idx, csv_topic in enumerate(bucket_topics):
+        if actual_count == 1:
+            position = 0.0  # Single topic gets max value (output_max)
+        else:
+            position = idx / (actual_count - 1)
+
+        output_min = fallback_bucket['output_min']
+        output_max = fallback_bucket['output_max']
+        # Invert: position 0.0 (highest freq) → output_max, position 1.0 (lowest freq) → output_min
+        bucketed_proportion = output_max - position * (output_max - output_min)
+        bucketed_proportion = _clamp(bucketed_proportion)
+
+        csv_topic['bucket_name'] = fallback_bucket['name'] + "_overflow"
+        csv_topic['bucket_output_min'] = output_min
+        csv_topic['bucket_output_max'] = output_max
+        csv_topic['bucket_position'] = position
+        csv_topic['bucketed_proportion'] = bucketed_proportion
+
+        assigned_ids.append(csv_topic['CSV_NUMBER'])
+
+    bucket_summaries.append((fallback_bucket['name'] + " (overflow)", assigned_ids))
+
+print("\n" + "="*60)
+print("Bucket assignments:")
+for bucket_name, ids in bucket_summaries:
+    display_ids = ids if ids else ["None"]
+    print(f"  {bucket_name}: {', '.join(display_ids)}")
+print("="*60 + "\n")
 
 # ---------- SECOND PASS: Scale frequencies and create word clouds ----------
 print("Second pass: Scaling frequencies and creating word clouds...")
@@ -770,66 +740,29 @@ for csv_data in csv_data_list:
 
 
 
-    # Scale frequencies using global scale
+    # Scale frequencies using the global linear scale (with optional bucket mapping)
     print(f"  Topic {CSV_NUMBER} - Scaling frequencies...")
     print(f"  Topic {CSV_NUMBER} - Original frequencies: {len(freqs)} words")
     if freqs:
         orig_counts = list(freqs.values())
         print(f"  Topic {CSV_NUMBER} - Original stats: min={min(orig_counts)}, max={max(orig_counts)}, mean={np.mean(orig_counts):.2f}")
     
-    # Select the appropriate global scale based on mixed scaling settings
-    if USE_MIXED_SCALING:
-        use_log = csv_data['use_log_scale']
-        scale_rank = csv_data.get('scale_rank', None)
-        scale_type_name = "LOGARITHMIC" if use_log else "LINEAR"
-        if scale_rank:
-            print(f"  Topic {CSV_NUMBER} - Rank: {scale_rank}, Using {scale_type_name} scaling")
-        global_scale = global_scales['log'] if use_log else global_scales['linear']
-    else:
-        # Single scale mode - use the precomputed global scale
-        use_log = csv_data['use_log_scale']
-        global_scale = global_scales['single']
-    
-    # Calculate global proportion for this topic's max frequency
-    # This tells us where this topic's max falls in the global scale
     if freqs:
         local_max = max(freqs.values())
         min_val = global_scale['min']
         max_val = global_scale['max']
-        
-        if use_log:
-            local_max_transformed = np.log1p(local_max)
-        else:
-            local_max_transformed = local_max
-        
         scale_range = max_val - min_val
-        scale_proportion = 0.0  # Initialize for logging
         if scale_range > 0:
-            # Calculate proportion within this topic's scale (0.0 to 1.0)
-            scale_proportion = (local_max_transformed - min_val) / scale_range
-            scale_proportion = max(0.0, min(1.0, scale_proportion))
-            
-            # For mixed scaling with log topics, map to global proportion
-            if USE_MIXED_SCALING and use_log:
-                # Map log scale proportion [0, 1] to global proportion [0.0, linear_min_proportion]
-                # This ensures log topics are smaller than linear topics
-                linear_min_prop = global_scales.get('linear_min_proportion', 0.0005)
-                global_proportion = scale_proportion * linear_min_prop
-            else:
-                # Linear topics or single scale mode: use proportion directly
-                global_proportion = scale_proportion
+            raw_proportion = (local_max - min_val) / scale_range
         else:
-            scale_proportion = 1.0
-            if USE_MIXED_SCALING and use_log:
-                linear_min_prop = global_scales.get('linear_min_proportion', 0.0005)
-                global_proportion = linear_min_prop  # Max log topic gets linear_min_prop
-            else:
-                global_proportion = 1.0
+            raw_proportion = 1.0
         
-        # Calculate max_font_size based on global proportion
-        # Topic with global max (1.0) gets FONT_MAX, others scale proportionally
-        # Formula ensures: min_proportion (0.0) → FONT_MIN, max_proportion (1.0) → FONT_MAX
-        topic_max_font_size = int(FONT_MIN + global_proportion * (FONT_MAX - FONT_MIN))
+        raw_proportion = _clamp(raw_proportion)
+        bucketed_proportion = csv_data.get('bucketed_proportion', raw_proportion)
+        bucket_name = csv_data.get('bucket_name', 'unassigned')
+        bucket_position = csv_data.get('bucket_position')
+        
+        topic_max_font_size = int(FONT_MIN + bucketed_proportion * (FONT_MAX - FONT_MIN))
         
         # Explicitly clamp to ensure it never goes below FONT_MIN (safety check)
         topic_max_font_size = max(FONT_MIN, topic_max_font_size)
@@ -844,13 +777,9 @@ for csv_data in csv_data_list:
         if topic_max_font_size <= FONT_MIN + 5:
             print(f"  Topic {CSV_NUMBER} - WARNING: Max font size ({topic_max_font_size}) is very close to minimum ({FONT_MIN}) - words will appear very small")
         
-        scale_type_display = "LOG" if use_log else "LINEAR"
-        if USE_MIXED_SCALING and use_log and scale_range > 0:
-            # Show both scale proportion and mapped global proportion for log topics
-            linear_min_prop = global_scales.get('linear_min_proportion', 0.0)
-            print(f"  Topic {CSV_NUMBER} - Max frequency: {local_max}, Scale: {scale_type_display}, Scale proportion: {scale_proportion:.4f} (mapped from log scale), Global proportion: {global_proportion:.4f} (mapped to [0.0, {linear_min_prop:.4f}]), Max font size: {topic_max_font_size} (min: {FONT_MIN}, max: {FONT_MAX})")
-        else:
-            print(f"  Topic {CSV_NUMBER} - Max frequency: {local_max}, Scale: {scale_type_display}, Global proportion: {global_proportion:.4f}, Max font size: {topic_max_font_size} (min: {FONT_MIN}, max: {FONT_MAX})")
+        position_display = f"{bucket_position:.2f}" if bucket_position is not None else "n/a"
+        print(f"  Topic {CSV_NUMBER} - Max frequency: {local_max}, Bucket: {bucket_name}, Bucket position: {position_display}, Raw proportion: {raw_proportion:.4f}, Bucketed proportion: {bucketed_proportion:.4f}, Max font size: {topic_max_font_size} (min: {FONT_MIN}, max: {FONT_MAX})")
+        global_proportion = bucketed_proportion
     else:
         topic_max_font_size = FONT_MAX
         global_proportion = 1.0
@@ -935,6 +864,12 @@ passed_words_df = pd.DataFrame({'word': passed_words_list})
 passed_words_df = passed_words_df.drop_duplicates()
 passed_words_df = passed_words_df.sort_values(by='word')
 passed_words_df.to_csv(os.path.join(OUTPUT_PATH, "passed words.csv"), index=False)
+
+#export words without POS tags to csv (remove duplicates first)
+words_without_pos_df = pd.DataFrame({'word': words_without_pos_list})
+words_without_pos_df = words_without_pos_df.drop_duplicates()
+words_without_pos_df = words_without_pos_df.sort_values(by='word')
+words_without_pos_df.to_csv(os.path.join(OUTPUT_PATH, "passed_words_without_pos.csv"), index=False)
 
 # Process each CSV in order, alternating left/right
 current_side = "left"
