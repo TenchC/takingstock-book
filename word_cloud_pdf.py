@@ -30,6 +30,8 @@ MODEL_PATH =  os.path.join(GLOBAL_PATH, "model/")
 STOPWORD_PATH = os.path.join(TAKINGSTOCK_PATH, "model_files/")
 OUTPUT_PATH = os.path.join(GLOBAL_PATH, 'outputs/word_cloud/')
 PASSED_WORDS_POS_FILE = os.path.join(GLOBAL_PATH, "passed_words_pos.csv")
+stopword_df_path = os.path.join(GLOBAL_PATH, "topic_word_stopword.csv")
+FOOTER_FILE = os.path.join(GLOBAL_PATH, "footers.csv")
 
 # print(f"Paths: Input: {INPUT_PATH}, Model: {MODEL_PATH}, Stopwords: {STOPWORD_PATH}, Output: {OUTPUT_PATH}")
 
@@ -43,7 +45,7 @@ PAGE_SIZE   = [432, 648]
 # Margin and gutter settings
 OUTER_MARGIN = 36  # 0.5 inches
 INNER_MARGIN = 54  # 0.75 inches (larger for binding)
-TOP_MARGIN = 36    # 0.5 inches
+TOP_MARGIN = 9    # 0.25 inches
 BOTTOM_MARGIN = 36 # 0.5 inches
 
 # Footer settings
@@ -63,7 +65,7 @@ SIDE = "left"
 
 #batch Processing
 BATCH_PROCESS = True
-PROCESS_SELECT = [11,38, 61]
+PROCESS_SELECT = [00]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -80,41 +82,43 @@ PURPLE_COLOR = "rgb(139, 131, 187)"
 # BLUE_COLOR = "rgb(192, 194, 241)"
 PINK_COLOR = "rgb(225, 181, 190)"
 CYAN_COLOR = "rgb(109, 177, 212)"
+NEON_CYAN_COLOR = "rgb(79, 199, 208)"
 LIGHT_CYAN_COLOR =  "rgb(148, 194, 219)"
 RED_COLOR = "rgb(176, 58, 54)"
 MAGENTA_COLOR = "rgb(200, 95, 125)"
 YELLOW_COLOR = "rgb(240, 207, 99)"
 BLACK_COLOR = "rgb(0,0,0)"
-GRAY_COLOR = "rgb(200,200,200)"
+GRAY_COLOR = "rgb(215,215,215)"
+LIGHT_GRAY_COLOR = "rgb(235,235,235)"
 WHITE_COLOR = "rgb(255,255,255)"
 
 
 
 
 # Word-cloud cosmetics
-FONT_MIN = 15         # adjust to taste
-FONT_MAX = 900        # Maximum font size - will be scaled per topic based on global proportions
+FONT_MIN = 23         # adjust to taste
+FONT_MAX = 1100        # Maximum font size - will be scaled per topic based on global proportions
 WC_WIDTH, WC_HEIGHT = 3200, 4800    # px; higher = sharper
-STOPWORD_COLOR = GRAY_COLOR
-WORD_COLOR = YELLOW_COLOR
+STOPWORD_COLOR = LIGHT_GRAY_COLOR
+WORD_COLOR = BLACK_COLOR
 BACKGROUND_COLOR = WHITE_COLOR
 
-POS_COLOR_NOUN = YELLOW_COLOR
-POS_COLOR_ADJECTIVE = MAGENTA_COLOR
-POS_COLOR_VERB = CYAN_COLOR
-POS_COLOR_OTHER = PURPLE_COLOR
+POS_COLOR_NOUN = BLACK_COLOR
+POS_COLOR_ADJECTIVE = NEON_CYAN_COLOR
+POS_COLOR_VERB = YELLOW_COLOR
+POS_COLOR_OTHER = BLACK_COLOR
 
-OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FONT_{FONT_MIN}_{FONT_MAX}_WORD_{WORD_COLOR}_STOPWORD_{STOPWORD_COLOR}_BACKGROUND_{BACKGROUND_COLOR}")  # final file
+OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FONT_{FONT_MIN}_{FONT_MAX}_MARGIN_{OUTER_MARGIN}_{INNER_MARGIN}_{TOP_MARGIN}_{BOTTOM_MARGIN}")  # final file
 FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-Regular.ttf") 
 
 # Scaling configuration
 SCALE_BUCKETS = [
-    {"name": "bucket1", "topic_count": 10,  "output_min": 0.90, "output_max": 1.00},
-    {"name": "bucket2", "topic_count": 10, "output_min": 0.70, "output_max": 0.90},
-    {"name": "bucket3", "topic_count": 11, "output_min": 0.50, "output_max": 0.70},
-    {"name": "bucket4", "topic_count": 11, "output_min": 0.30, "output_max": 0.50},
-    {"name": "bucket5", "topic_count": 11, "output_min": 0.15, "output_max": 0.30},
-    {"name": "bucket6", "topic_count": 9999, "output_min": 0.09, "output_max": 0.15},  # overflow bucket
+    {"name": "bucket1", "topic_count": 10,  "output_min": 0.95, "output_max": 1.00},
+    {"name": "bucket2", "topic_count": 10, "output_min": 0.80, "output_max": 0.95},
+    {"name": "bucket3", "topic_count": 13, "output_min": 0.60, "output_max": 0.80},
+    {"name": "bucket4", "topic_count": 13, "output_min": 0.40, "output_max": 0.60},
+    {"name": "bucket5", "topic_count": 13, "output_min": 0.20, "output_max": 0.40},
+    {"name": "bucket6", "topic_count": 9999, "output_min": 0.10, "output_max": 0.20},  # overflow bucket (currently has 5 topics)
 ]
 # -----------------------------------------------------------------------------
 def analyze_csv(input_csv, input_path, num_rows):
@@ -409,9 +413,6 @@ DICT_PATH=os.path.join(MODEL_PATH,"dictionary.dict")
 dictionary = corpora.Dictionary.load(MODEL_PATH+'model.id2word')
 
 
-
-stopword_df_path = os.path.join(OUTPUT_PATH, "topic_word_stopword.csv")
-
 if os.path.exists(stopword_df_path):
     topic_word_stopword_df = pd.read_csv(stopword_df_path)
     # Add 'Replace' column if it doesn't exist
@@ -424,7 +425,7 @@ else:
 
 
 def gray_color(word, font_size, position, orientation, random_state=None, **kw):
-    """Return an rgb() string whose gray level comes from the key_score_dict."""
+    """Return an rgb() string based on stopword status and POS tagging."""
     global _word_color_cache
     global passed_words_list
     if MANUAL_PICK:
@@ -554,7 +555,7 @@ all_freqs_dicts = []
 csv_data_list = []  # Store CSV processing data for second pass
 
 for csv in CSV_LIST:
-    CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0]
+    CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0].zfill(2)  # Normalize to 2-digit zero-padded string
     print("Processing (pass 1): " + CSV_NUMBER)
     this_topics_words = dict(all_topics_words[int(CSV_NUMBER)])
     df = pd.read_csv(INPUT_PATH+csv).dropna(subset=["description", "count"])
@@ -706,13 +707,6 @@ for csv_data in csv_data_list:
     if CUTOFF and len(keyword_list) > NUM_ROWS:
         keyword_list = keyword_list[:NUM_ROWS]
 
-
-    key_score_dict = {}
-    for key in keyword_list:
-
-        key_score = this_topics_words.get(key[0], None)
-        unproccessed_word = unproccessed_word_dict[key[0]]
-        key_score_dict[unproccessed_word] = key_score
     #creating bow vector and tokenizing
 
     # #if the bow vector is empty (only happens if words are in stopword list), replace with "none" for outlining text later
@@ -833,8 +827,7 @@ for csv_data in csv_data_list:
         'wc': wc,
         'keyword_list': keyword_list,
         'unprocessed_word_dict': unproccessed_word_dict,
-        'this_topics_words': this_topics_words,
-        'key_score_dict': key_score_dict
+        'this_topics_words': this_topics_words
     }
 
     # Toggle side for next iteration
@@ -853,6 +846,25 @@ pdfmetrics.registerFont(TTFont(FOOTER_FONT_NAME, FOOTER_FONT_FILE))
 # Create the final PDF
 final_pdf_path = OUT_PDF + '.pdf'
 c = canvas.Canvas(final_pdf_path, pagesize=PAGE_SIZE)
+
+# Load footer data from CSV
+footer_lookup = {}
+if os.path.exists(FOOTER_FILE):
+    try:
+        footer_df = pd.read_csv(FOOTER_FILE)
+        # Create lookup dictionary: topic_id (as string) -> {topic_name, topic_fullname}
+        for _, row in footer_df.iterrows():
+            topic_id = str(row['topic_id']).zfill(2)  # Normalize to 2-digit zero-padded string
+            footer_lookup[topic_id] = {
+                'topic_name': str(row['topic name']),
+                'topic_fullname': str(row['topic fullname'])
+            }
+        print(f"Loaded footer data for {len(footer_lookup)} topics from {FOOTER_FILE}")
+    except Exception as e:
+        print(f"Warning: Could not load footer file {FOOTER_FILE}: {e}")
+        footer_lookup = {}
+else:
+    print(f"Warning: Footer file not found at {FOOTER_FILE}")
 
 #export stopword data to csv
 stopword_csv_path = os.path.join(OUTPUT_PATH, "topic_word_stopword.csv")
@@ -875,7 +887,7 @@ words_without_pos_df.to_csv(os.path.join(OUTPUT_PATH, "passed_words_without_pos.
 current_side = "left"
 page_number = 1
 for csv in CSV_LIST:
-    CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0]
+    CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0].zfill(2)  # Normalize to 2-digit zero-padded string
     
     if CSV_NUMBER not in PDF_DATA:
         continue
@@ -903,7 +915,7 @@ for csv in CSV_LIST:
     # Calculate scale to fit within available space
     scale_x = available_width / img_width
     scale_y = available_height / img_height
-    scale = min(scale_x, scale_y) * 0.9  # 90% of max size for some padding
+    scale = min(scale_x, scale_y)# * 0.9  # 90% of max size for some padding
     
     # Calculate final dimensions
     draw_w = img_width * scale
@@ -919,21 +931,18 @@ for csv in CSV_LIST:
     # Add footer
     c.saveState()
     c.setFont(FOOTER_FONT_NAME, FOOTER_FONT_SIZE)
-    current_footer_text = FOOTER_TEXT + str(CSV_NUMBER)
     
-    # Get first three items from key_score_dict for the second line
-    key_score_dict = data.get('key_score_dict', {})
-    if key_score_dict:
-        # Get the first three keywords and extract the unprocessed words
-        first_three_keywords = []
-        for word in key_score_dict.keys():
-            if word not in MY_STOPWORDS and key_score_dict[word] not in [0, None]:
-                first_three_keywords.append(word)
-            if len(first_three_keywords) == 3:
-                break
-        keywords_text = ", ".join(first_three_keywords)
+    # Get footer data from CSV lookup
+    footer_data = footer_lookup.get(CSV_NUMBER, {})
+    if footer_data:
+        # Use topic number for the first line
+        current_footer_text = FOOTER_TEXT + str(CSV_NUMBER)
+        # Use topic fullname for the second line
+        keywords_text = footer_data.get('topic_fullname', 'No topic name available')
     else:
-        keywords_text = "No topic words available"
+        # Fallback if topic not found in footer CSV
+        current_footer_text = FOOTER_TEXT + str(CSV_NUMBER)
+        keywords_text = "No topic data available"
     
     # Choose footer alignment based on even/odd page (left/right side)
     if current_side == "left":
@@ -964,7 +973,7 @@ print(f"✅ Final word-cloud PDF created → {final_pdf_path}")
 
 # Clean up temporary files
 for csv in CSV_LIST:
-    CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0]
+    CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0].zfill(2)  # Normalize to 2-digit zero-padded string
     if CSV_NUMBER in PDF_DATA:
         try:
             os.unlink(PDF_DATA[CSV_NUMBER]['tmp_png'])
