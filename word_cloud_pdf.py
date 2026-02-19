@@ -13,6 +13,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+from reportlab.lib.units import cm
 from pick import pick
 
 
@@ -30,7 +31,7 @@ MODEL_PATH =  os.path.join(GLOBAL_PATH, "model/")
 STOPWORD_PATH = os.path.join(TAKINGSTOCK_PATH, "model_files/")
 OUTPUT_PATH = os.path.join(GLOBAL_PATH, 'outputs/word_cloud/')
 PASSED_WORDS_POS_FILE = os.path.join(GLOBAL_PATH, "passed_words_pos.csv")
-stopword_df_path = os.path.join(GLOBAL_PATH, "topic_word_stopword.csv")
+STOPWORD_DF_PATH = os.path.join(GLOBAL_PATH, "topic_word_stopword.csv")
 FOOTER_FILE = os.path.join(GLOBAL_PATH, "footers.csv")
 
 # print(f"Paths: Input: {INPUT_PATH}, Model: {MODEL_PATH}, Stopwords: {STOPWORD_PATH}, Output: {OUTPUT_PATH}")
@@ -38,19 +39,27 @@ FOOTER_FILE = os.path.join(GLOBAL_PATH, "footers.csv")
 PDF_DATA = {}
 
 FONT_NAME   = "CrimsonText"
+FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-Regular.ttf") 
 FOOTER_FONT_FILE = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-SemiBold.ttf")
 FOOTER_FONT_NAME = "CrimsonText-SemiBold"
-PAGE_SIZE   = [432, 648]  
+PAGE_SIZE   = [20*cm, 30*cm]  # 20cm × 30cm (ReportLab uses points; cm converts to pt)
 
-# Margin and gutter settings
-OUTER_MARGIN = 36  # 0.5 inches
-INNER_MARGIN = 54  # 0.75 inches (larger for binding)
-TOP_MARGIN = 9    # 0.25 inches
-BOTTOM_MARGIN = 36 # 0.5 inches
+# Scale factor: original page was 432×648 pt (6×9"); new is 20×30cm. Scale ≈ 1.31.
+_ORIG_PAGE_WIDTH = 432
+PAGE_SCALE = (20*cm) / _ORIG_PAGE_WIDTH
+print(f"PAGE_SCALE is {PAGE_SCALE}")
+
+# Margin and gutter settings (scaled from original 36, 54, 9, 36 pt)
+OUTER_MARGIN = int(36 * PAGE_SCALE)   # was 0.5"
+INNER_MARGIN = int(54 * PAGE_SCALE)   # was 0.75" (larger for binding)
+TOP_MARGIN = int(9 * PAGE_SCALE)      # was 0.25"
+BOTTOM_MARGIN = int(36 * PAGE_SCALE)  # was 0.5"
 
 # Footer settings
 FOOTER_TEXT = "TOPIC: "  # Base text, topic number will be added dynamically
-FOOTER_FONT_SIZE = 10
+FOOTER_FONT_SIZE = int(10 * PAGE_SCALE)
+FOOTER_LINE1_OFFSET = int(10 * PAGE_SCALE)   # offset below content for topic line
+FOOTER_LINE2_OFFSET = int(25 * PAGE_SCALE)   # offset below content for keywords line
 
 # Cache for word colors
 _word_color_cache = {}
@@ -65,7 +74,7 @@ SIDE = "left"
 
 #batch Processing
 BATCH_PROCESS = True
-PROCESS_SELECT = [00]
+PROCESS_SELECT = [10, 20, 30, 60, 11, 29]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -95,10 +104,10 @@ WHITE_COLOR = "rgb(255,255,255)"
 
 
 
-# Word-cloud cosmetics
-FONT_MIN = 23         # adjust to taste
-FONT_MAX = 1100        # Maximum font size - will be scaled per topic based on global proportions
-WC_WIDTH, WC_HEIGHT = 3200, 4800    # px; higher = sharper
+# Word-cloud cosmetics (scaled for 20×30cm page)
+FONT_MIN = int(23)         # adjust to taste
+FONT_MAX = int(1100)       # Maximum font size - will be scaled per topic based on global proportions
+WC_WIDTH, WC_HEIGHT = int(3200 * PAGE_SCALE), int(4800 * PAGE_SCALE)  # px; higher = sharper
 STOPWORD_COLOR = LIGHT_GRAY_COLOR
 WORD_COLOR = BLACK_COLOR
 BACKGROUND_COLOR = WHITE_COLOR
@@ -108,11 +117,18 @@ POS_COLOR_ADJECTIVE = NEON_CYAN_COLOR
 POS_COLOR_VERB = YELLOW_COLOR
 POS_COLOR_OTHER = BLACK_COLOR
 
-OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FONT_{FONT_MIN}_{FONT_MAX}_MARGIN_{OUTER_MARGIN}_{INNER_MARGIN}_{TOP_MARGIN}_{BOTTOM_MARGIN}")  # final file
-FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-Regular.ttf") 
+OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FONT_{FONT_MIN}_{FONT_MAX}_MARGIN_{OUTER_MARGIN}_{INNER_MARGIN}_{TOP_MARGIN}_{BOTTOM_MARGIN}_FONT_{FONT_NAME}")  # final file
+
 
 # Scaling configuration
 SCALE_BUCKETS = [
+
+    # {"name": "bucket1", "topic_count": 1,  "output_min": 0.95, "output_max": 1.00},
+    # {"name": "bucket2", "topic_count": 1, "output_min": 0.80, "output_max": 0.95},
+    # {"name": "bucket3", "topic_count": 1, "output_min": 0.60, "output_max": 0.80},
+    # {"name": "bucket4", "topic_count": 1, "output_min": 0.40, "output_max": 0.60},
+    # {"name": "bucket5", "topic_count": 1, "output_min": 0.20, "output_max": 0.40},
+    # {"name": "bucket6", "topic_count": 9999, "output_min": 0.10, "output_max": 0.20},  # overflow bucket (currently has 5 topics)
     {"name": "bucket1", "topic_count": 10,  "output_min": 0.95, "output_max": 1.00},
     {"name": "bucket2", "topic_count": 10, "output_min": 0.80, "output_max": 0.95},
     {"name": "bucket3", "topic_count": 13, "output_min": 0.60, "output_max": 0.80},
@@ -413,15 +429,15 @@ DICT_PATH=os.path.join(MODEL_PATH,"dictionary.dict")
 dictionary = corpora.Dictionary.load(MODEL_PATH+'model.id2word')
 
 
-if os.path.exists(stopword_df_path):
-    topic_word_stopword_df = pd.read_csv(stopword_df_path)
+if os.path.exists(STOPWORD_DF_PATH):
+    topic_word_stopword_df = pd.read_csv(STOPWORD_DF_PATH)
     # Add 'Replace' column if it doesn't exist
     if 'Replace' not in topic_word_stopword_df.columns:
         topic_word_stopword_df['Replace'] = ''
-    print(f"Loaded existing stopword data from {stopword_df_path}")
+    print(f"Loaded existing stopword data from {STOPWORD_DF_PATH}")
 else:
     topic_word_stopword_df = pd.DataFrame(columns=['word', 'stopword', 'stopped', 'Replace'])
-    print(f"Created new stopword data file at {stopword_df_path}")
+    print(f"Created new stopword data file at {STOPWORD_DF_PATH}")
 
 
 def gray_color(word, font_size, position, orientation, random_state=None, **kw):
@@ -951,7 +967,7 @@ for csv in CSV_LIST:
         footer_x = PAGE_SIZE[0] - right_margin - c.stringWidth(current_footer_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE)  # Right-aligned on right pages
     
     # Draw the topic line
-    c.drawString(footer_x, BOTTOM_MARGIN - 10, current_footer_text)
+    c.drawString(footer_x, BOTTOM_MARGIN - FOOTER_LINE1_OFFSET, current_footer_text)
     
     # Draw the keywords line (same font and size)
     if current_side == "left":
@@ -959,7 +975,7 @@ for csv in CSV_LIST:
     else:
         keywords_x = PAGE_SIZE[0] - right_margin - c.stringWidth(keywords_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE)  # Right-aligned on right pages
     
-    c.drawString(keywords_x, BOTTOM_MARGIN - 25, keywords_text)
+    c.drawString(keywords_x, BOTTOM_MARGIN - FOOTER_LINE2_OFFSET, keywords_text)
     c.restoreState()
     
     c.showPage()
