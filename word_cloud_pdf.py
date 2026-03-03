@@ -38,10 +38,10 @@ FOOTER_FILE = os.path.join(GLOBAL_PATH, "footers.csv")
 
 PDF_DATA = {}
 
-FONT_NAME   = "CrimsonText"
-FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-Regular.ttf") 
-FOOTER_FONT_FILE = os.path.join(GLOBAL_PATH, "fonts/CrimsonText-SemiBold.ttf")
-FOOTER_FONT_NAME = "CrimsonText-SemiBold"
+FONT_NAME   = "Cardo"
+FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/Cardo.ttf") 
+FOOTER_FONT_FILE = os.path.join(GLOBAL_PATH, "fonts/Cardo-Bold.ttf")
+FOOTER_FONT_NAME = "Cardo-Bold"
 PAGE_SIZE   = [20*cm, 30*cm]  # 20cm × 30cm (ReportLab uses points; cm converts to pt)
 
 # Scale factor: original page was 432×648 pt (6×9"); new is 20×30cm. Scale ≈ 1.31.
@@ -97,6 +97,7 @@ RED_COLOR = "rgb(176, 58, 54)"
 MAGENTA_COLOR = "rgb(200, 95, 125)"
 YELLOW_COLOR = "rgb(240, 207, 99)"
 BLACK_COLOR = "rgb(0,0,0)"
+DARK_GRAY_COLOR = "rgb(40,40,40)"
 GRAY_COLOR = "rgb(215,215,215)"
 LIGHT_GRAY_COLOR = "rgb(235,235,235)"
 WHITE_COLOR = "rgb(255,255,255)"
@@ -109,13 +110,13 @@ FONT_MIN = int(23)         # adjust to taste
 FONT_MAX = int(1100)       # Maximum font size - will be scaled per topic based on global proportions
 WC_WIDTH, WC_HEIGHT = int(3200 * PAGE_SCALE), int(4800 * PAGE_SCALE)  # px; higher = sharper
 STOPWORD_COLOR = LIGHT_GRAY_COLOR
-WORD_COLOR = BLACK_COLOR
+WORD_COLOR = DARK_GRAY_COLOR
 BACKGROUND_COLOR = WHITE_COLOR
 
-POS_COLOR_NOUN = BLACK_COLOR
+POS_COLOR_NOUN = DARK_GRAY_COLOR
 POS_COLOR_ADJECTIVE = NEON_CYAN_COLOR
-POS_COLOR_VERB = YELLOW_COLOR
-POS_COLOR_OTHER = BLACK_COLOR
+POS_COLOR_VERB = MAGENTA_COLOR
+POS_COLOR_OTHER = DARK_GRAY_COLOR
 
 OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FONT_{FONT_MIN}_{FONT_MAX}_MARGIN_{OUTER_MARGIN}_{INNER_MARGIN}_{TOP_MARGIN}_{BOTTOM_MARGIN}_FONT_{FONT_NAME}")  # final file
 
