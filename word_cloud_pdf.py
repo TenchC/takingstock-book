@@ -40,8 +40,8 @@ PDF_DATA = {}
 
 FONT_NAME   = "Cardo"
 FONT_FILE   = os.path.join(GLOBAL_PATH, "fonts/Cardo.ttf") 
-FOOTER_FONT_FILE = os.path.join(GLOBAL_PATH, "fonts/Cardo-Bold.ttf")
-FOOTER_FONT_NAME = "Cardo-Bold"
+FOOTER_FONT_FILE = os.path.join(GLOBAL_PATH, "fonts/IBMPlexMono-SemiBold.ttf")
+FOOTER_FONT_NAME = "IBMPlexMono-SemiBold"
 PAGE_SIZE   = [20*cm, 30*cm]  # 20cm × 30cm (ReportLab uses points; cm converts to pt)
 
 # Scale factor: original page was 432×648 pt (6×9"); new is 20×30cm. Scale ≈ 1.31.
@@ -56,10 +56,9 @@ TOP_MARGIN = int(9 * PAGE_SCALE)      # was 0.25"
 BOTTOM_MARGIN = int(36 * PAGE_SCALE)  # was 0.5"
 
 # Footer settings
-FOOTER_TEXT = "TOPIC: "  # Base text, topic number will be added dynamically
+FOOTER_TEXT = "Topic "  # Base text, topic number will be added dynamically
 FOOTER_FONT_SIZE = int(10 * PAGE_SCALE)
-FOOTER_LINE1_OFFSET = int(10 * PAGE_SCALE)   # offset below content for topic line
-FOOTER_LINE2_OFFSET = int(25 * PAGE_SCALE)   # offset below content for keywords line
+FOOTER_LINE_OFFSET = int(-4 * PAGE_SCALE)   # offset below content for footer line
 
 # Cache for word colors
 _word_color_cache = {}
@@ -73,8 +72,8 @@ words_without_pos_list = []
 SIDE = "left"
 
 #batch Processing
-BATCH_PROCESS = True
-PROCESS_SELECT = [10, 20, 30, 60, 11, 29]
+BATCH_PROCESS = False
+PROCESS_SELECT = [60]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -97,11 +96,15 @@ RED_COLOR = "rgb(176, 58, 54)"
 MAGENTA_COLOR = "rgb(200, 95, 125)"
 YELLOW_COLOR = "rgb(240, 207, 99)"
 BLACK_COLOR = "rgb(0,0,0)"
-DARK_GRAY_COLOR = "rgb(40,40,40)"
+DARK_GRAY_COLOR = "rgb(70,70,70)"
 GRAY_COLOR = "rgb(215,215,215)"
 LIGHT_GRAY_COLOR = "rgb(235,235,235)"
 WHITE_COLOR = "rgb(255,255,255)"
 
+YELLOW_COLOR = "rgb(240, 207, 99)"
+# YELLOW_COLOR_1 = "rgb(221,191,90)"
+# YELLOW_COLOR_2 = "rgb(224,190,78)"
+# YELLOW_COLOR_3 = "rgb(237,202,90)"
 
 
 
@@ -110,13 +113,13 @@ FONT_MIN = int(23)         # adjust to taste
 FONT_MAX = int(1100)       # Maximum font size - will be scaled per topic based on global proportions
 WC_WIDTH, WC_HEIGHT = int(3200 * PAGE_SCALE), int(4800 * PAGE_SCALE)  # px; higher = sharper
 STOPWORD_COLOR = LIGHT_GRAY_COLOR
-WORD_COLOR = DARK_GRAY_COLOR
+WORD_COLOR = BLACK_COLOR
 BACKGROUND_COLOR = WHITE_COLOR
 
-POS_COLOR_NOUN = DARK_GRAY_COLOR
+POS_COLOR_NOUN = WORD_COLOR
 POS_COLOR_ADJECTIVE = NEON_CYAN_COLOR
-POS_COLOR_VERB = MAGENTA_COLOR
-POS_COLOR_OTHER = DARK_GRAY_COLOR
+POS_COLOR_VERB = YELLOW_COLOR
+POS_COLOR_OTHER = WORD_COLOR
 
 OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FONT_{FONT_MIN}_{FONT_MAX}_MARGIN_{OUTER_MARGIN}_{INNER_MARGIN}_{TOP_MARGIN}_{BOTTOM_MARGIN}_FONT_{FONT_NAME}")  # final file
 
@@ -305,10 +308,13 @@ def get_pos_color(word):
     
     pos_value = pos_value.upper()
     if pos_value.startswith("NN"):
+        print(f"noun: {word}")
         return POS_COLOR_NOUN
     if pos_value.startswith("JJ"):
+        print(f"adj: {word}")
         return POS_COLOR_ADJECTIVE
     if pos_value.startswith("VB"):
+        print(f"verb: {word}")
         return POS_COLOR_VERB
     print(f"WARNING: No valid POS tag found for word '{word}'. Defaulting to other color.")
     if word not in words_without_pos_list:
@@ -871,7 +877,8 @@ if os.path.exists(FOOTER_FILE):
         footer_df = pd.read_csv(FOOTER_FILE)
         # Create lookup dictionary: topic_id (as string) -> {topic_name, topic_fullname}
         for _, row in footer_df.iterrows():
-            topic_id = str(row['topic_id']).zfill(2)  # Normalize to 2-digit zero-padded string
+            # topic_id = str(row['topic_id']).zfill(2)  # Normalize to 2-digit zero-padded string
+            topic_id = str(row['topic_id'])
             footer_lookup[topic_id] = {
                 'topic_name': str(row['topic name']),
                 'topic_fullname': str(row['topic fullname'])
@@ -952,31 +959,18 @@ for csv in CSV_LIST:
     # Get footer data from CSV lookup
     footer_data = footer_lookup.get(CSV_NUMBER, {})
     if footer_data:
-        # Use topic number for the first line
-        current_footer_text = FOOTER_TEXT + str(CSV_NUMBER)
-        # Use topic fullname for the second line
-        keywords_text = footer_data.get('topic_fullname', 'No topic name available')
+        topic_fullname = footer_data.get('topic_fullname', 'No topic name available')
+        footer_text = f"Topic {CSV_NUMBER} ({topic_fullname}, etc.)"
     else:
-        # Fallback if topic not found in footer CSV
-        current_footer_text = FOOTER_TEXT + str(CSV_NUMBER)
-        keywords_text = "No topic data available"
+        footer_text = f"Topic {CSV_NUMBER} (No topic data available)"
     
     # Choose footer alignment based on even/odd page (left/right side)
     if current_side == "left":
         footer_x = left_margin  # Left-aligned on left pages
     else:
-        footer_x = PAGE_SIZE[0] - right_margin - c.stringWidth(current_footer_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE)  # Right-aligned on right pages
+        footer_x = PAGE_SIZE[0] - right_margin - c.stringWidth(footer_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE)  # Right-aligned on right pages
     
-    # Draw the topic line
-    c.drawString(footer_x, BOTTOM_MARGIN - FOOTER_LINE1_OFFSET, current_footer_text)
-    
-    # Draw the keywords line (same font and size)
-    if current_side == "left":
-        keywords_x = left_margin  # Left-aligned on left pages
-    else:
-        keywords_x = PAGE_SIZE[0] - right_margin - c.stringWidth(keywords_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE)  # Right-aligned on right pages
-    
-    c.drawString(keywords_x, BOTTOM_MARGIN - FOOTER_LINE2_OFFSET, keywords_text)
+    c.drawString(footer_x, BOTTOM_MARGIN - FOOTER_LINE_OFFSET, footer_text)
     c.restoreState()
     
     c.showPage()
