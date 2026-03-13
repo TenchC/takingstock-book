@@ -49,16 +49,16 @@ _ORIG_PAGE_WIDTH = 432
 PAGE_SCALE = (20*cm) / _ORIG_PAGE_WIDTH
 print(f"PAGE_SCALE is {PAGE_SCALE}")
 
-# Margin and gutter settings (scaled from original 36, 54, 9, 36 pt)
-OUTER_MARGIN = int(36 * PAGE_SCALE)   # was 0.5"
-INNER_MARGIN = int(54 * PAGE_SCALE)   # was 0.75" (larger for binding)
-TOP_MARGIN = int(9 * PAGE_SCALE)      # was 0.25"
-BOTTOM_MARGIN = int(36 * PAGE_SCALE)  # was 0.5"
+# Margin and gutter settings (in points: 1" = 72 pt)
+OUTER_MARGIN = int(0.5 * 72)   # 0.5" outside
+INNER_MARGIN = int(0.75 * 72)  # 0.75" inside (binding)
+TOP_MARGIN = int(0.5 * 72)     # 0.5" top
+BOTTOM_MARGIN = int(1.0 * 72)  # 1" bottom (footer centered in this band)
 
 # Footer settings
 FOOTER_TEXT = "Topic "  # Base text, topic number will be added dynamically
 FOOTER_FONT_SIZE = int(10 * PAGE_SCALE)
-FOOTER_LINE_OFFSET = int(-4 * PAGE_SCALE)   # offset below content for footer line
+FOOTER_NUDGE = 13  # Points to nudge footer up (positive) or down (negative)
 
 # Cache for word colors
 _word_color_cache = {}
@@ -72,8 +72,8 @@ words_without_pos_list = []
 SIDE = "left"
 
 #batch Processing
-BATCH_PROCESS = False
-PROCESS_SELECT = [60]
+BATCH_PROCESS = True
+PROCESS_SELECT = [58, 59, 60, 61, 62, 63]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -970,7 +970,12 @@ for csv in CSV_LIST:
     else:
         footer_x = PAGE_SIZE[0] - right_margin - c.stringWidth(footer_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE)  # Right-aligned on right pages
     
-    c.drawString(footer_x, BOTTOM_MARGIN - FOOTER_LINE_OFFSET, footer_text)
+    # Footer text vertically centered in bottom margin (using font ascent/descent)
+    ascent_pt = pdfmetrics.getAscent(FOOTER_FONT_NAME) * FOOTER_FONT_SIZE / 1000
+    descent_pt = pdfmetrics.getDescent(FOOTER_FONT_NAME) * FOOTER_FONT_SIZE / 1000  # negative
+    text_center_offset = (ascent_pt + descent_pt) / 2
+    footer_y = BOTTOM_MARGIN / 2 - text_center_offset + FOOTER_NUDGE
+    c.drawString(footer_x, footer_y, footer_text)
     c.restoreState()
     
     c.showPage()
