@@ -73,7 +73,7 @@ SIDE = "left"
 
 #batch Processing
 BATCH_PROCESS = True
-PROCESS_SELECT = [58, 59, 60, 61, 62, 63]
+PROCESS_SELECT = [00]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -877,8 +877,8 @@ if os.path.exists(FOOTER_FILE):
         footer_df = pd.read_csv(FOOTER_FILE)
         # Create lookup dictionary: topic_id (as string) -> {topic_name, topic_fullname}
         for _, row in footer_df.iterrows():
-            # topic_id = str(row['topic_id']).zfill(2)  # Normalize to 2-digit zero-padded string
-            topic_id = str(row['topic_id'])
+            topic_id = str(row['topic_id']).zfill(2)  # Normalize to 2-digit zero-padded string
+            # topic_id = str(row['topic_id'])
             footer_lookup[topic_id] = {
                 'topic_name': str(row['topic name']),
                 'topic_fullname': str(row['topic fullname'])
@@ -955,11 +955,14 @@ for csv in CSV_LIST:
     # Add footer
     c.saveState()
     c.setFont(FOOTER_FONT_NAME, FOOTER_FONT_SIZE)
-    
+    print("CSV_NUMBER", CSV_NUMBER)
     # Get footer data from CSV lookup
     footer_data = footer_lookup.get(CSV_NUMBER, {})
+    print("footer_data", footer_data)
     if footer_data:
         topic_fullname = footer_data.get('topic_fullname', 'No topic name available')
+        if CSV_NUMBER[0] == '0':
+            CSV_NUMBER = CSV_NUMBER[1:]
         footer_text = f"Topic {CSV_NUMBER} ({topic_fullname}, etc.)"
     else:
         footer_text = f"Topic {CSV_NUMBER} (No topic data available)"
