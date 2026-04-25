@@ -50,15 +50,15 @@ PAGE_SCALE = (20*cm) / _ORIG_PAGE_WIDTH
 print(f"PAGE_SCALE is {PAGE_SCALE}")
 
 # Margin and gutter settings (in points: 1" = 72 pt)
-OUTER_MARGIN = int(0.5 * 72)   # 0.5" outside
+OUTER_MARGIN = int(0.625 * 72)   # 5/8" outside
 INNER_MARGIN = int(0.75 * 72)  # 0.75" inside (binding)
 TOP_MARGIN = int(0.5 * 72)     # 0.5" top
 BOTTOM_MARGIN = int(1.0 * 72)  # 1" bottom (footer centered in this band)
 
 # Footer settings
 FOOTER_TEXT = "Topic "  # Base text, topic number will be added dynamically
-FOOTER_FONT_SIZE = int(10 * PAGE_SCALE)
-FOOTER_NUDGE = 13  # Points to nudge footer up (positive) or down (negative)
+FOOTER_FONT_SIZE = int(9 * PAGE_SCALE)
+FOOTER_NUDGE = 20  # Points to nudge footer up (positive) or down (negative)
 
 # Cache for word colors
 _word_color_cache = {}
@@ -73,7 +73,7 @@ SIDE = "left"
 
 #batch Processing
 BATCH_PROCESS = True
-PROCESS_SELECT = [00]
+PROCESS_SELECT = [57]
 CSV_LIST = {}
 
 #cutoff for how many rows of the CSV to add to the textcloud
@@ -99,6 +99,9 @@ BLACK_COLOR = "rgb(0,0,0)"
 DARK_GRAY_COLOR = "rgb(70,70,70)"
 GRAY_COLOR = "rgb(215,215,215)"
 LIGHT_GRAY_COLOR = "rgb(235,235,235)"
+LIGHT_GRAY_COLOR_2 = "rgb(230,230,230)"
+LIGHT_GRAY_COLOR_3 = "rgb(225,225,225)"
+LIGHT_GRAY_COLOR_4 = "rgb(222,222,222)"
 WHITE_COLOR = "rgb(255,255,255)"
 
 YELLOW_COLOR = "rgb(240, 207, 99)"
@@ -121,8 +124,15 @@ POS_COLOR_ADJECTIVE = NEON_CYAN_COLOR
 POS_COLOR_VERB = YELLOW_COLOR
 POS_COLOR_OTHER = WORD_COLOR
 
-OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FONT_{FONT_MIN}_{FONT_MAX}_MARGIN_{OUTER_MARGIN}_{INNER_MARGIN}_{TOP_MARGIN}_{BOTTOM_MARGIN}_FONT_{FONT_NAME}")  # final file
+print(f"WORD_COLOR is {WORD_COLOR}")
+print(f"STOPWORD_COLOR is {STOPWORD_COLOR}")
+print(f"BACKGROUND_COLOR is {BACKGROUND_COLOR}")
+print(f"POS_COLOR_NOUN is {POS_COLOR_NOUN}")
+print(f"POS_COLOR_ADJECTIVE is {POS_COLOR_ADJECTIVE}")
+print(f"POS_COLOR_VERB is {POS_COLOR_VERB}")
+print(f"POS_COLOR_OTHER is {POS_COLOR_OTHER}")
 
+OUT_PDF     = os.path.join(OUTPUT_PATH, f"wordcloud_FULL_BATCH_{BATCH_PROCESS}_GRAY_{STOPWORD_COLOR}")  # final file
 
 # Scaling configuration
 SCALE_BUCKETS = [
@@ -908,7 +918,7 @@ words_without_pos_df = words_without_pos_df.sort_values(by='word')
 words_without_pos_df.to_csv(os.path.join(OUTPUT_PATH, "passed_words_without_pos.csv"), index=False)
 
 # Process each CSV in order, alternating left/right
-current_side = "left"
+current_side = "right"
 page_number = 1
 for csv in CSV_LIST:
     CSV_NUMBER = csv.split('topic_')[1].split('_counts.csv')[0].zfill(2)  # Normalize to 2-digit zero-padded string
@@ -968,10 +978,13 @@ for csv in CSV_LIST:
         footer_text = f"Topic {CSV_NUMBER} (No topic data available)"
     
     # Choose footer alignment based on even/odd page (left/right side)
+    FOOTER_INSET = int(0.125 * 72)  # 1/8 inch in points
+
     if current_side == "left":
-        footer_x = left_margin  # Left-aligned on left pages
+        footer_x = left_margin + FOOTER_INSET  # Left-aligned + 1/8" inset
     else:
-        footer_x = PAGE_SIZE[0] - right_margin - c.stringWidth(footer_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE)  # Right-aligned on right pages
+        footer_x = PAGE_SIZE[0] - right_margin - c.stringWidth(footer_text, FOOTER_FONT_NAME, FOOTER_FONT_SIZE) - FOOTER_INSET  # Right-aligned - 1/8" inset
+  
     
     # Footer text vertically centered in bottom margin (using font ascent/descent)
     ascent_pt = pdfmetrics.getAscent(FOOTER_FONT_NAME) * FOOTER_FONT_SIZE / 1000
